@@ -7,8 +7,11 @@ services:
 
     # Bound to localhost only - nginx on the host terminates TLS and proxies
     # /voice-gen/ to this port. Never publish it on 0.0.0.0.
+    #
+    # Set HV_PUBLISH_PORT in .env when 8080 is already in use on the host;
+    # only the left-hand side changes, the container always listens on 8080.
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${HV_PUBLISH_PORT:-8080}:8080"
 
     env_file:
       - .env
