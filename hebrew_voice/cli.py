@@ -87,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--password", help="prompted for if omitted")
     add.add_argument("--admin", action="store_true")
     user_sub.add_parser("list", help="list accounts")
+    verify = user_sub.add_parser("verify", help="mark an address confirmed by hand")
+    verify.add_argument("email")
     passwd = user_sub.add_parser("passwd", help="change a password")
     passwd.add_argument("email")
     passwd.add_argument("--password")
@@ -264,6 +266,9 @@ def _cmd_user(args: argparse.Namespace) -> int:
                 email=args.email,
                 password_hash=hash_for(args.password),
                 is_admin=args.admin,
+                # An admin at a shell has already vouched for the address, and
+                # bootstrapping a new box shouldn't depend on working SMTP.
+                verified=True,
             )
         except repo.EmailTaken:
             raise SystemExit(f"{args.email} is already registered")
@@ -274,7 +279,11 @@ def _cmd_user(args: argparse.Namespace) -> int:
         for user in repo.list_users(settings.db_path):
             flags = ",".join(
                 part
-                for part in ("admin" if user.is_admin else "", "" if user.is_active else "disabled")
+                for part in (
+                    "admin" if user.is_admin else "",
+                    "" if user.is_active else "disabled",
+                    "" if user.is_verified else "unverified",
+                )
                 if part
             )
             print(f"{user.id:<4} {user.email:<32} {flags}")
@@ -288,6 +297,9 @@ def _cmd_user(args: argparse.Namespace) -> int:
         repo.set_password(settings.db_path, user.id, hash_for(args.password))
         repo.delete_user_sessions(settings.db_path, user.id)
         print(f"password updated for {user.email}; existing sessions revoked")
+    elif args.user_command == "verify":
+        repo.mark_email_verified(settings.db_path, user.id)
+        print(f"{user.email} is now verified")
     elif args.user_command == "disable":
         repo.set_active(settings.db_path, user.id, False)
         print(f"disabled {user.email}")

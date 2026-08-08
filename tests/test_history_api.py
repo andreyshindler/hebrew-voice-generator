@@ -2,7 +2,7 @@
 
 import pytest
 
-from .conftest import INVITE, csrf
+from .conftest import INVITE, csrf, register_verified
 
 
 def generate(client, text="שלום עולם"):
@@ -15,12 +15,9 @@ def other_client(app, settings):
     from fastapi.testclient import TestClient
 
     client = TestClient(app)
-    response = client.post(
-        "/api/auth/signup",
-        json={"email": "other@example.com", "password": "another-password", "invite_code": INVITE},
+    return register_verified(
+        client, settings, email="other@example.com", password="another-password"
     )
-    assert response.status_code == 201
-    return client
 
 
 class TestListing:

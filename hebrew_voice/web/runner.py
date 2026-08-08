@@ -70,6 +70,8 @@ class SynthRunner:
         self.login_limiter = RateLimiter(per_minute=10, burst=10)
         self.signup_limiter = RateLimiter(per_minute=1, burst=5)
         self.preview_limiter = RateLimiter(per_minute=60, burst=20)
+        # Mail is expensive and abusable; 3 an hour is plenty for a resend.
+        self.resend_limiter = RateLimiter(per_minute=1, burst=3)
         self._user_gates: Dict[int, asyncio.Semaphore] = {}
         self._waiting = 0
 

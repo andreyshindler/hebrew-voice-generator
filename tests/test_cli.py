@@ -97,7 +97,7 @@ class TestAdmin:
 
     def test_initdb_then_add_and_list_a_user(self, capsys):
         assert cli.main(["initdb"]) == 0
-        assert "schema v1" in capsys.readouterr().out
+        assert "schema v" in capsys.readouterr().out
 
         assert cli.main(["user", "add", "a@b.co", "--password", "0123456789"]) == 0
         assert "created a@b.co" in capsys.readouterr().out

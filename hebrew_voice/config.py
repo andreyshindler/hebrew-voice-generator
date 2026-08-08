@@ -129,6 +129,19 @@ class Settings:
     history_max_age_days: int = 30
     cleanup_interval_min: int = 60
 
+    # Email. No smtp_host means messages are logged instead of sent, which is
+    # refused in production when verification is required.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_from_name: str = "מחולל קול עברי"
+    smtp_starttls: bool = True
+    smtp_timeout: int = 15
+    require_email_verification: bool = True
+    verify_token_ttl_hours: int = 24
+
     # Engine
     edge_proxy: Optional[str] = None
     synth_retries: int = 2
@@ -157,6 +170,19 @@ class Settings:
         if not parts.scheme or not parts.netloc:
             return ""
         return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def email_enabled(self) -> bool:
+        """True when a real SMTP relay is configured."""
+        return bool(self.smtp_host and self.smtp_from)
+
+    def verification_link(self, token: str) -> str:
+        """The absolute URL that goes in the email.
+
+        ``base_url`` already carries the subpath, so the token is appended to
+        it directly rather than through :meth:`url`, which would double it.
+        """
+        return f"{self.base_url}/verify?token={token}"
 
     @property
     def cookie_path(self) -> str:
@@ -223,6 +249,18 @@ class Settings:
             history_keep=_int(env, "HV_HISTORY_KEEP", 50),
             history_max_age_days=_int(env, "HV_HISTORY_MAX_AGE_DAYS", 30),
             cleanup_interval_min=_int(env, "HV_CLEANUP_INTERVAL_MIN", 60),
+            smtp_host=env.get("HV_SMTP_HOST") or "",
+            smtp_port=_int(env, "HV_SMTP_PORT", 587),
+            smtp_user=env.get("HV_SMTP_USER") or "",
+            smtp_password=env.get("HV_SMTP_PASSWORD") or "",
+            # Gmail rewrites From to the authenticated account anyway, so the
+            # sensible default is the login itself.
+            smtp_from=env.get("HV_SMTP_FROM") or env.get("HV_SMTP_USER") or "",
+            smtp_from_name=env.get("HV_SMTP_FROM_NAME") or "מחולל קול עברי",
+            smtp_starttls=_bool(env, "HV_SMTP_STARTTLS", True),
+            smtp_timeout=_int(env, "HV_SMTP_TIMEOUT", 15),
+            require_email_verification=_bool(env, "HV_REQUIRE_EMAIL_VERIFICATION", True),
+            verify_token_ttl_hours=_int(env, "HV_VERIFY_TOKEN_TTL_HOURS", 24),
             edge_proxy=env.get("HV_EDGE_PROXY") or None,
             synth_retries=_int(env, "HV_SYNTH_RETRIES", 2),
             log_level=(env.get("HV_LOG_LEVEL") or "info").lower(),
@@ -254,13 +292,28 @@ class Settings:
                 )
             if not self.base_url:
                 problems.append("HV_BASE_URL must be set in production (origin checks)")
-            elif self.secure_cookies and not self.base_url.startswith("https://"):
+            if self.require_email_verification and not self.base_url:
+                problems.append(
+                    "HV_BASE_URL is required to build verification links "
+                    "(or set HV_REQUIRE_EMAIL_VERIFICATION=false)"
+                )
+            if self.require_email_verification and not self.email_enabled:
+                # Without a relay, signup would create accounts that can never
+                # be activated - a service nobody can join.
+                problems.append(
+                    "HV_SMTP_HOST and HV_SMTP_FROM must be set when "
+                    "HV_REQUIRE_EMAIL_VERIFICATION is on, or nobody could confirm "
+                    "an account"
+                )
+            if self.base_url and self.secure_cookies and not self.base_url.startswith("https://"):
                 # Secure cookies are never sent over http, so the user would
                 # log in successfully and then appear logged out.
                 problems.append(
                     "HV_BASE_URL must be https when HV_SECURE_COOKIES is on, "
                     f"got {self.base_url!r}"
                 )
+        if not 1 <= self.smtp_port <= 65535:
+            problems.append(f"HV_SMTP_PORT must be a valid port, got {self.smtp_port}")
         if self.max_chars < 1:
             problems.append("HV_MAX_CHARS must be positive")
         if self.max_concurrent_synth < 1:

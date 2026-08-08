@@ -12,7 +12,7 @@ from hebrew_voice.quota import RateLimiter, TokenBucket, day_reset_epoch, quota_
 from hebrew_voice.web.app import create_app
 
 from . import fakes
-from .conftest import EMAIL, INVITE, PASSWORD, csrf
+from .conftest import EMAIL, INVITE, PASSWORD, csrf, register_verified
 
 
 class TestTokenBucket:
@@ -100,15 +100,23 @@ class TestRateLimit:
     def test_too_many_requests_are_refused(self, settings, fake_tts):
         tight = replace(settings, rate_limit_per_min=1, rate_limit_burst=1)
         with TestClient(create_app(tight)) as client:
-            client.post(
-                "/api/auth/signup",
-                json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
-            )
+            register_verified(client, tight)
             first = client.post("/api/synthesize", json={"text": "שלום"}, headers=csrf(client))
             second = client.post("/api/synthesize", json={"text": "שלום"}, headers=csrf(client))
         assert first.status_code == 200
         assert second.status_code == 429
         assert second.json()["error"]["code"] == "rate_limited"
+
+
+async def _register_verified_async(client, settings):
+    """Signup, confirm, log in - the async twin of register_verified."""
+    await client.post(
+        "/api/auth/signup",
+        json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
+    )
+    user = repo.get_user_by_email(settings.db_path, EMAIL)
+    repo.mark_email_verified(settings.db_path, user.id)
+    await client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
 
 
 class TestConcurrency:
@@ -130,10 +138,7 @@ class TestConcurrency:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             async with app.router.lifespan_context(app):
-                await client.post(
-                    "/api/auth/signup",
-                    json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
-                )
+                await _register_verified_async(client, tight)
                 headers = {"X-CSRF-Token": client.cookies.get("hv_csrf")}
                 first = asyncio.create_task(
                     client.post("/api/synthesize", json={"text": "ראשון"}, headers=headers)
@@ -163,10 +168,7 @@ class TestConcurrency:
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             async with app.router.lifespan_context(app):
-                await client.post(
-                    "/api/auth/signup",
-                    json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
-                )
+                await _register_verified_async(client, tight)
                 response = await client.post(
                     "/api/synthesize",
                     json={"text": "שלום"},

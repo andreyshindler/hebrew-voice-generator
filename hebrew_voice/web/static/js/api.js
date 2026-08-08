@@ -28,6 +28,9 @@ const MESSAGES = {
   account_locked: "החשבון ננעל זמנית לאחר יותר מדי ניסיונות. נסו שוב בעוד כמה דקות",
   invalid_invite: "קוד ההזמנה אינו תקין",
   email_taken: "כתובת האימייל כבר רשומה",
+  email_unverified: "יש לאמת את כתובת האימייל. שלחנו אליכם קישור בהרשמה",
+  email_send_failed: "לא הצלחנו לשלוח את מייל האימות. נסו שוב בעוד רגע",
+  invalid_token: "הקישור אינו תקף או שפג תוקפו",
   signup_disabled: "ההרשמה סגורה כרגע",
   csrf_failed: "פג תוקף החיבור. רעננו את הדף ונסו שוב",
   cross_origin_blocked: "הבקשה נחסמה מטעמי אבטחה",
@@ -104,6 +107,8 @@ export const api = {
   signup: (email, password, invite_code) =>
     request("/api/auth/signup", { method: "POST", body: { email, password, invite_code } }),
   logout: () => request("/api/auth/logout", { method: "POST" }),
+  resendVerification: (email) =>
+    request("/api/auth/resend-verification", { method: "POST", body: { email } }),
   preview: (body, signal) => request("/api/preview", { method: "POST", body, signal }),
   synthesize: (body) => request("/api/synthesize", { method: "POST", body }),
   history: (params = {}) => {

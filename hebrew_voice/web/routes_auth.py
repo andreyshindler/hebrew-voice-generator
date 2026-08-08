@@ -14,10 +14,12 @@ from ..errors import (
     AccountLocked,
     Conflict,
     Forbidden,
+    MailFailed,
     NotFound,
     RateLimited,
     Unauthorized,
 )
+from ..mailer import MailError, build_verification_email
 from ..models import User
 from ..voices import catalog
 from .deps import (
@@ -29,7 +31,7 @@ from .deps import (
     require_csrf,
     require_user,
 )
-from .schemas import LoginRequest, SignupRequest
+from .schemas import LoginRequest, ResendRequest, SignupRequest
 
 log = logging.getLogger("hebrew_voice.auth")
 
@@ -126,13 +128,84 @@ async def signup(
             email=payload.email,
             password_hash=password_hash,
             invite_code=supplied,
+            verified=not settings.require_email_verification,
         )
     except repo.EmailTaken as exc:
         raise Conflict("That email is already registered", code="email_taken") from exc
 
-    csrf_token = await _start_session(request, response, settings, user)
     log.info("new account %s (admin=%s)", user.email, user.is_admin)
+
+    if settings.require_email_verification:
+        # No session: the account is inert until the emailed link is opened.
+        await send_verification_email(request, settings, user)
+        response.status_code = 202
+        return {"status": "verification_sent", "email": user.email}
+
+    csrf_token = await _start_session(request, response, settings, user)
     return {"user": user.public(), "csrf_token": csrf_token}
+
+
+async def send_verification_email(request: Request, settings: Settings, user: User) -> None:
+    """Mint a token and mail the confirmation link.
+
+    Raises :class:`MailFailed` on a transport error. The account is left in
+    place so the resend endpoint can recover it - deleting it here would race
+    with the invite-code check and lose nothing useful.
+    """
+    token = await run_in_threadpool(
+        repo.create_email_token,
+        settings.db_path,
+        user_id=user.id,
+        purpose=repo.VERIFY_EMAIL,
+        ttl_seconds=settings.verify_token_ttl_hours * 3600,
+    )
+    message = build_verification_email(
+        to=user.email,
+        link=settings.verification_link(token),
+        expires_hours=settings.verify_token_ttl_hours,
+        from_address=settings.smtp_from or "no-reply@localhost",
+        from_name=settings.smtp_from_name,
+    )
+    mailer = request.app.state.mailer
+    try:
+        await run_in_threadpool(mailer.send, message)
+    except MailError as exc:
+        log.warning("verification mail to %s failed: %s", user.email, exc)
+        raise MailFailed(
+            "Could not send the confirmation email", code="email_send_failed"
+        ) from exc
+
+
+@router.post("/resend-verification", status_code=204)
+async def resend_verification(
+    payload: ResendRequest,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    """Send the confirmation link again.
+
+    Always 204, whether or not the address exists or is already verified, so
+    this can't be used to discover which addresses are registered.
+    """
+    runner = request.app.state.runner
+    email = payload.email.strip().lower()
+    for key in (f"ip:{client_ip(request)}", f"email:{email}"):
+        allowed, retry_after = runner.resend_limiter.check(key)
+        if not allowed:
+            raise RateLimited(
+                "Too many requests, try again later",
+                headers={"Retry-After": str(max(1, int(retry_after)))},
+            )
+
+    user = await run_in_threadpool(repo.get_user_by_email, settings.db_path, email)
+    if user is not None and user.is_active and not user.is_verified:
+        try:
+            await send_verification_email(request, settings, user)
+        except MailFailed:
+            # Still 204 - the caller learns nothing either way, and the
+            # failure is in the log.
+            pass
+    return Response(status_code=204)
 
 
 @router.post("/login")
@@ -187,6 +260,15 @@ async def login(
         raise Unauthorized("Incorrect email or password", code="invalid_credentials")
 
     await run_in_threadpool(repo.clear_failed_logins, settings.db_path, user.id)
+
+    if settings.require_email_verification and not user.is_verified:
+        # A distinct code, so the UI offers a resend button rather than
+        # claiming the password was wrong.
+        raise Forbidden(
+            "Confirm your email address first",
+            code="email_unverified",
+            detail={"email": user.email},
+        )
 
     if security.needs_rehash(
         user.password_hash, n=settings.scrypt_n, r=settings.scrypt_r, p=settings.scrypt_p
