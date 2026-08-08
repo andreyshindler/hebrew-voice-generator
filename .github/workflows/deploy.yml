@@ -1,0 +1,80 @@
+name: Test and deploy
+
+# Merging to main deploys. Nothing else does - a PR branch is never pushed to
+# the VPS.
+on:
+  push:
+    branches: [main]
+
+# A second push while a deploy is running waits for it, then supersedes any
+# other queued run. The box only ever needs the newest commit.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -e ".[dev]"
+
+      # The suite is entirely offline: an autouse fixture makes a live edge-tts
+      # or SMTP call raise, so this needs no secrets and no services.
+      - run: python -m pytest
+
+  deploy:
+    name: Deploy to the VPS
+    needs: test          # a red suite never reaches the server
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          install -m 600 /dev/null ~/.ssh/deploy_key
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          # Pinned from ssh-keyscan at setup. Deliberately not
+          # StrictHostKeyChecking=no: that would hand a key that can deploy to
+          # whatever happens to answer on port 22.
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Pull, rebuild, restart
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT || '22' }}
+        run: |
+          # No command is sent: authorized_keys pins this key to
+          # deploy/deploy.sh with a forced command, so the runner cannot choose
+          # what runs. The script's exit status becomes this job's result, and
+          # it fails if /healthz doesn't come up.
+          ssh -i ~/.ssh/deploy_key \
+              -o BatchMode=yes \
+              -o ConnectTimeout=15 \
+              -p "$SSH_PORT" \
+              "$SSH_USER@$SSH_HOST"
+
+      - name: Where to look if that failed
+        if: failure()
+        run: |
+          echo "The container was left running - nothing was rolled back."
+          echo "On the VPS:"
+          echo "  cd /opt/hebrew-voice"
+          echo "  docker compose ps"
+          echo "  docker compose logs --tail=100"
+          echo "  ./deploy/deploy.sh        # rerun by hand to see the full output"

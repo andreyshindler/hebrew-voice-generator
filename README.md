@@ -139,6 +139,13 @@ of sent, verification link and all, so the whole flow works with no mail server.
 
 See [`deploy/DEPLOY.md`](deploy/DEPLOY.md) for the full runbook.
 
+**Merges to `main` deploy themselves.** [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)
+runs the test suite, then SSHes to the VPS and runs [`deploy/deploy.sh`](deploy/deploy.sh):
+fetch, back up the database, rebuild, and poll `/healthz`. A red suite never reaches the
+server, and a container that doesn't come up healthy fails the run and is left in place to
+be inspected. The deploy key is pinned to that one script with an SSH forced command, so it
+can't open a shell.
+
 **Sharing a hostname with another app** — the common case, where something else already
 owns `/`. Set one variable:
 

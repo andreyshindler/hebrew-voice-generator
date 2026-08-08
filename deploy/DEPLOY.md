@@ -125,6 +125,102 @@ reach the internet:
 sudo docker compose exec hebrew-voice hebrew-voice say "בדיקה" -o /tmp/t.mp3
 ```
 
+## 6. Automatic deploys
+
+Once this is set up, merging to `main` rebuilds and restarts the container by itself.
+GitHub Actions runs the test suite, then SSHes in and runs
+[`deploy/deploy.sh`](deploy.sh).
+
+### A dedicated user that can run Docker but not much else
+
+Today everything under `/opt/hebrew-voice` is root-owned and driven with `sudo`. Give the
+deploy its own unprivileged user instead — membership of the `docker` group means no
+`sudo` rule anywhere:
+
+```bash
+sudo useradd -m -G docker deploy
+sudo chown -R deploy:deploy /opt/hebrew-voice
+sudo -u deploy ssh-keygen -t ed25519 -f /home/deploy/.ssh/deploy_key -N ""
+```
+
+> Being in the `docker` group is equivalent to root on the host — that's true of any
+> Docker deploy, and it's why the key below can't open a shell.
+
+### Pin the key to the script
+
+Put the **public** key in `/home/deploy/.ssh/authorized_keys` prefixed with a forced
+command, all on one line:
+
+```
+command="/opt/hebrew-voice/deploy/deploy.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... deploy@github
+```
+
+That prefix is what makes an SSH deploy key acceptable. The key cannot open a shell,
+forward a port, or run any other command — only this script. If the GitHub secret ever
+leaks, the worst it buys is a redeploy of your own `main`.
+
+```bash
+sudo chown -R deploy:deploy /home/deploy/.ssh
+sudo chmod 700 /home/deploy/.ssh && sudo chmod 600 /home/deploy/.ssh/authorized_keys
+```
+
+### Repository secrets
+
+Settings → Secrets and variables → Actions:
+
+| Secret | Value |
+| --- | --- |
+| `SSH_HOST` | `srv1515969.hstgr.cloud` |
+| `SSH_USER` | `deploy` |
+| `SSH_KEY` | the **private** key: `sudo cat /home/deploy/.ssh/deploy_key` |
+| `SSH_KNOWN_HOSTS` | `ssh-keyscan -t ed25519 srv1515969.hstgr.cloud` |
+| `SSH_PORT` | only if sshd isn't on 22 |
+
+`SSH_KNOWN_HOSTS` is not optional padding. Without it the workflow would need
+`StrictHostKeyChecking=no`, which hands a key that can deploy to whatever answers on
+port 22.
+
+### Prove it works by hand first
+
+In this order — each step rules out a different failure:
+
+```bash
+sudo -u deploy /opt/hebrew-voice/deploy/deploy.sh     # 1. the script itself
+ssh -i /home/deploy/.ssh/deploy_key deploy@localhost  # 2. the forced command runs it
+                                                      #    instead of giving a shell
+```
+
+Then merge something trivial and watch the run in the Actions tab.
+
+### What the script does
+
+Fetches `origin/main` and `git reset --hard`s onto it, backs up the database, rebuilds,
+prunes dangling images, and polls `/healthz` for 90 seconds. If the container never
+answers it prints the last 50 log lines and exits non-zero, leaving the container running
+so you can inspect it — nothing is rolled back automatically.
+
+It deliberately never runs `git clean -xfd` (that would delete `.env` and `data/`, both
+gitignored) or `docker compose down -v` (that would destroy the volume — every account
+and every recording). A `flock` stops two deploys overlapping.
+
+Useful flags:
+
+```bash
+./deploy/deploy.sh --no-pull    # rebuild the current tree without fetching
+HV_HEALTH_TIMEOUT=180 ./deploy/deploy.sh   # a slow box
+```
+
+### When a run goes red
+
+| Symptom | Cause |
+| --- | --- |
+| `permission denied` on the docker socket | The `docker` group isn't applied until `deploy` logs in again. `sudo -u deploy -i` or reboot. |
+| The SSH step hangs then times out | The VPS firewall is dropping GitHub's runners. Check `sudo ufw status`. |
+| `Host key verification failed` | `SSH_KNOWN_HOSTS` is missing, or the host key changed. Re-run `ssh-keyscan`. |
+| The script runs but you get a shell instead | The forced command isn't on the same line as the key in `authorized_keys`. |
+| `another deploy is already running` | A previous run is still going, or died holding the lock: `rm /tmp/hebrew-voice-deploy.lock`. |
+| Healthy locally, red in Actions | The health probe runs inside the container, so this is the app failing to boot. `docker compose logs --tail=100`. |
+
 ## Day-to-day
 
 ```bash
@@ -137,10 +233,16 @@ sudo docker compose up -d --build                 # upgrade (migrations run at s
 Back up the named volume — it holds the database and every generated file:
 
 ```bash
-sudo docker compose exec hebrew-voice \
-    sqlite3 /data/hebrew-voice.db ".backup /data/backup.db"
+# The runtime image is python:3.12-slim and has no sqlite3 CLI, so use the
+# interpreter. .backup() is safe against a live database; `cp` is not.
+sudo docker compose exec -T hebrew-voice python -c \
+  "import sqlite3; s=sqlite3.connect('file:/data/hebrew-voice.db?mode=ro', uri=True); \
+   d=sqlite3.connect('/data/backup.db'); s.backup(d)"
 sudo docker cp hebrew-voice:/data/backup.db ./hv-$(date +%F).db
 ```
+
+Every automatic deploy also takes one of these first, keeping the last five under
+`/data/backups/` in the volume.
 
 ## If something looks wrong
 
