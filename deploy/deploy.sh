@@ -15,7 +15,11 @@
 
 set -euo pipefail
 
-APP_DIR="${HV_APP_DIR:-/opt/hebrew-voice}"
+# The checkout is wherever this script lives, so the same file works at
+# /opt/hebrew-voice, ~/projects/hebrew-voice-generator, or anywhere else.
+# HV_APP_DIR overrides it if you ever need to.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+APP_DIR="${HV_APP_DIR:-$(dirname -- "$SCRIPT_DIR")}"
 BRANCH="${HV_DEPLOY_BRANCH:-main}"
 CONTAINER="${HV_CONTAINER:-hebrew-voice}"
 HEALTH_TIMEOUT="${HV_HEALTH_TIMEOUT:-90}"
@@ -42,7 +46,15 @@ cd "$APP_DIR" || die "no such directory: $APP_DIR"
 [ -f docker-compose.yml ] || die "$APP_DIR is not the application checkout"
 [ -f .env ] || die "$APP_DIR/.env is missing - the app cannot start without it"
 
-compose() { docker compose "$@"; }
+# Set HV_DOCKER="sudo docker" if this account isn't in the docker group. Being
+# in the group is better: an SSH forced command can't type a sudo password.
+DOCKER="${HV_DOCKER:-docker}"
+compose() { $DOCKER compose "$@"; }
+
+$DOCKER info >/dev/null 2>&1 || die \
+    "cannot talk to the Docker daemon as $(id -un). Add the account to the docker
+       group (sudo usermod -aG docker $(id -un)), then log out and back in - group
+       membership doesn't apply to an existing session. Or set HV_DOCKER='sudo docker'."
 
 # ---------------------------------------------------------------- fetch code
 
