@@ -5,6 +5,9 @@ name: Test and deploy
 on:
   push:
     branches: [main]
+  # A "Run workflow" button in the Actions tab, for redeploying the current
+  # main without inventing a commit - after editing .env on the box, say.
+  workflow_dispatch:
 
 # A second push while a deploy is running waits for it, then supersedes any
 # other queued run. The box only ever needs the newest commit.
