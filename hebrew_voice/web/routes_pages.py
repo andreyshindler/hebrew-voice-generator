@@ -25,7 +25,7 @@ async def index(request: Request, settings: Settings = Depends(get_settings)):
     """The generator itself. Anonymous visitors go to the login page."""
     auth = await current_auth(request)
     if auth is None:
-        return RedirectResponse("/login", status_code=303)
+        return RedirectResponse(settings.url("/login"), status_code=303)
     session, user = auth
     quota = await request.app.state.runner.quota_state(user)
     bootstrap = {
@@ -49,7 +49,7 @@ async def index(request: Request, settings: Settings = Depends(get_settings)):
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, settings: Settings = Depends(get_settings)):
     if await current_auth(request) is not None:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(settings.url("/"), status_code=303)
     return _templates(request).TemplateResponse(
         request,
         "login.html",
@@ -62,7 +62,7 @@ async def signup_page(request: Request, settings: Settings = Depends(get_setting
     if not settings.signup_enabled:
         raise NotFound("Signup is closed", code="signup_disabled")
     if await current_auth(request) is not None:
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(settings.url("/"), status_code=303)
     return _templates(request).TemplateResponse(
         request, "signup.html", {"version": __version__}
     )

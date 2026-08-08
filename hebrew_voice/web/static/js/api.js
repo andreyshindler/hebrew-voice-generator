@@ -2,6 +2,14 @@
    Adds the CSRF header, unwraps the error envelope, and translates the
    server's stable error codes into Hebrew. */
 
+/* The URL prefix the app is served under ("" at the root, "/voice-gen" behind
+   a subpath). Set by the server on <html data-base>, so it works on the login
+   page too, which has no bootstrap payload. */
+export const BASE = document.documentElement.dataset.base || "";
+
+/** Turn an app-absolute path into a real URL: "/api/me" -> "/voice-gen/api/me". */
+export const url = (path) => `${BASE}${path}`;
+
 export class ApiError extends Error {
   constructor(code, message, detail, status) {
     super(message);
@@ -55,7 +63,7 @@ export async function request(path, { method = "GET", body, signal } = {}) {
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (UNSAFE.has(method)) headers["X-CSRF-Token"] = readCookie("hv_csrf");
 
-  const response = await fetch(path, {
+  const response = await fetch(url(path), {
     method,
     headers,
     credentials: "same-origin",
@@ -74,9 +82,10 @@ export async function request(path, { method = "GET", body, signal } = {}) {
   if (!response.ok) {
     const error = (payload && payload.error) || {};
     // An expired session should take the user to the login page, not leave
-    // them staring at a dead button.
+    // them staring at a dead button. `path` is still the unprefixed form here,
+    // which is what this test wants.
     if (response.status === 401 && !path.startsWith("/api/auth/")) {
-      window.location.href = "/login";
+      window.location.href = url("/login");
     }
     throw new ApiError(
       error.code || `http_${response.status}`,

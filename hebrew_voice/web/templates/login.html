@@ -29,11 +29,11 @@
   </form>
 
   {% if signup_enabled %}
-  <p class="auth-alt">אין לכם חשבון? <a href="/signup">הרשמה עם קוד הזמנה</a></p>
+  <p class="auth-alt">אין לכם חשבון? <a href="{{ base }}/signup">הרשמה עם קוד הזמנה</a></p>
   {% endif %}
 </main>
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="/static/js/auth.js?v={{ version }}"></script>
+<script type="module" src="{{ base }}/static/js/auth.js?v={{ version }}"></script>
 {% endblock %}

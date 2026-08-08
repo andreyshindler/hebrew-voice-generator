@@ -104,7 +104,8 @@ The settings you'll actually think about:
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `HV_SECRET_KEY` | — | Required in production. |
-| `HV_BASE_URL` | — | Public URL. Required in production; unsafe requests from other origins are refused. |
+| `HV_BASE_URL` | — | Full public URL **including any subpath**. Required in production. Sets the allowed origin, and its path becomes the app's URL prefix. |
+| `HV_ROOT_PATH` | derived | The prefix the app is served under. Leave unset — it comes from `HV_BASE_URL`. |
 | `HV_INVITE_CODES` | empty | Comma-separated codes accepted at signup. |
 | `HV_SIGNUP_ENABLED` | `true` | Set false to close registration entirely. |
 | `HV_MAX_CHARS` | `10000` | Longest single request. |
@@ -125,13 +126,25 @@ Production boots refuse to start with a missing secret key, insecure cookies, no
 
 ## Deploying to a VPS
 
-See [`deploy/DEPLOY.md`](deploy/DEPLOY.md) for the full runbook. In short: install into
-`/opt/hebrew-voice`, put the configuration in `/etc/hebrew-voice/env`, use
-[`deploy/hebrew-voice.service`](deploy/hebrew-voice.service) and
-[`deploy/nginx.conf.example`](deploy/nginx.conf.example), and let certbot handle TLS.
+See [`deploy/DEPLOY.md`](deploy/DEPLOY.md) for the full runbook.
 
-A `Dockerfile` and `docker-compose.yml` are included if you'd rather run it in a
-container; mount a volume at `/data`.
+**Sharing a hostname with another app** — the common case, where something else already
+owns `/`. Set one variable:
+
+```ini
+HV_BASE_URL=https://your-host.example.com/voice-gen
+```
+
+and every link, redirect, cookie path, and audio URL the app emits picks up the prefix;
+`HV_ROOT_PATH` is derived from it. Then paste the two blocks from
+[`deploy/nginx-subpath.conf.example`](deploy/nginx-subpath.conf.example) into the
+hostname's existing `server {}` and run `docker compose up -d --build`. The app accepts
+the prefix whether or not your proxy strips it, so `proxy_pass` works with or without a
+trailing slash.
+
+**Owning a whole hostname** — install into `/opt/hebrew-voice`, put the configuration in
+`/etc/hebrew-voice/env`, and use [`deploy/hebrew-voice.service`](deploy/hebrew-voice.service)
+with [`deploy/nginx.conf.example`](deploy/nginx.conf.example), with certbot for TLS.
 
 ---
 

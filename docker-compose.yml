@@ -1,16 +1,42 @@
 services:
   hebrew-voice:
     build: .
+    image: hebrew-voice:latest
+    container_name: hebrew-voice
     restart: unless-stopped
-    # Bind to localhost only and put nginx (with TLS) in front.
+
+    # Bound to localhost only - nginx on the host terminates TLS and proxies
+    # /voice-gen/ to this port. Never publish it on 0.0.0.0.
     ports:
       - "127.0.0.1:8080:8080"
+
     env_file:
       - .env
     environment:
+      # Inside the container the data directory is always /data, whatever the
+      # host uses.
       HV_DATA_DIR: /data
+      HV_HOST: 0.0.0.0
+      HV_PORT: "8080"
+
+    # The SQLite database and the generated audio live here; keep the volume
+    # across image rebuilds or you lose every account and every recording.
     volumes:
       - hebrew-voice-data:/data
+
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   hebrew-voice-data:

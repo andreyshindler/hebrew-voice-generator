@@ -52,7 +52,7 @@ def set_session_cookies(
         httponly=True,
         secure=settings.secure_cookies,
         samesite="lax",
-        path="/",
+        path=settings.cookie_path,
     )
     response.set_cookie(
         CSRF_COOKIE,
@@ -61,13 +61,15 @@ def set_session_cookies(
         httponly=False,
         secure=settings.secure_cookies,
         samesite="lax",
-        path="/",
+        path=settings.cookie_path,
     )
 
 
 def clear_session_cookies(response: Response, settings: Settings) -> None:
     for name in (SESSION_COOKIE, CSRF_COOKIE):
-        response.delete_cookie(name, path="/", secure=settings.secure_cookies, samesite="lax")
+        response.delete_cookie(
+            name, path=settings.cookie_path, secure=settings.secure_cookies, samesite="lax"
+        )
 
 
 async def _start_session(

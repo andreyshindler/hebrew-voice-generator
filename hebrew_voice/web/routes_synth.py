@@ -87,6 +87,6 @@ async def synthesize_endpoint(
     runner = request.app.state.runner
     generation, quota = await runner.run(user, payload)
 
-    data = generation.public(full=True)
+    data = generation.public(full=True, base=settings.root_path)
     data["quota"] = quota.public()
     return data

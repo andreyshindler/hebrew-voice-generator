@@ -46,6 +46,12 @@ def test_symbols_can_be_left_alone():
     assert "%" in T.prepare("50%", symbols=False)
 
 
+def test_expansion_does_not_leave_a_gap_before_punctuation():
+    # " שקלים " padding would otherwise produce "250 שקלים ." - a spoken pause.
+    assert T.prepare("מחיר 250 ₪.") == "מחיר 250 שקלים."
+    assert T.prepare("גדל ב-50%!") == "גדל ב-50 אחוז!"
+
+
 def test_bidi_control_characters_are_removed():
     assert T.prepare("‏שלום‎") == "שלום"
 

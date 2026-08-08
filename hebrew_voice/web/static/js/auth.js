@@ -1,7 +1,7 @@
 /* Login and signup. Both pages post JSON like the rest of the API, so there
    are no HTML form submissions anywhere and no multipart parser on the server. */
 
-import { api, ApiError } from "./api.js";
+import { api, ApiError, BASE, url } from "./api.js";
 import { $ } from "./ui.js";
 
 const errorBox = $("#form-error");
@@ -14,8 +14,11 @@ function showError(message) {
 
 function nextTarget() {
   const next = new URLSearchParams(window.location.search).get("next");
-  // Only ever follow a same-site path, never an absolute URL from the query.
-  return next && next.startsWith("/") && !next.startsWith("//") ? next : "/";
+  // Only ever follow a path inside this app: never an absolute URL from the
+  // query string, and never a sibling app sharing the hostname.
+  const safe =
+    next && next.startsWith(`${BASE}/`) && !next.startsWith("//") ? next : null;
+  return safe || url("/");
 }
 
 function wire(form, submit) {

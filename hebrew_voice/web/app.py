@@ -7,6 +7,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -71,6 +72,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.state.settings = settings
     app.state.runner = SynthRunner(settings)
     app.state.templates = Jinja2Templates(directory=str(HERE / "templates"))
+    # Templates build every link as {{ base }}/...; empty at the root.
+    app.state.templates.env.globals["base"] = settings.root_path
 
     app.mount("/static", StaticFiles(directory=str(HERE / "static")), name="static")
 
@@ -80,8 +83,50 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(routes_history.router)
 
     _install_middleware(app, settings)
-    _install_error_handlers(app)
+    _install_error_handlers(app, settings)
+    if settings.root_path:
+        # Wraps everything above, so routing sees a root-relative path no
+        # matter which proxy style is in front.
+        return PrefixStripper(app, settings.root_path)  # type: ignore[return-value]
     return app
+
+
+class PrefixStripper:
+    """Serve an app mounted at ``prefix`` whether or not the proxy strips it.
+
+    ``proxy_pass http://host:8080/;`` (trailing slash) strips the prefix, while
+    ``proxy_pass http://host:8080;`` forwards it intact. Rather than depend on
+    getting that one character right - or on Starlette's ``root_path``
+    semantics, which have shifted between versions - this removes the prefix if
+    it is present and leaves the request alone if it isn't.
+    """
+
+    def __init__(self, app, prefix: str) -> None:
+        self.app = app
+        self.prefix = prefix
+
+    def __getattr__(self, name):
+        # Keep the FastAPI instance usable for tests and tooling that reach for
+        # .routes, .state, .router, and friends.
+        return getattr(self.app, name)
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            path = scope.get("path", "")
+            if path == self.prefix or path.startswith(self.prefix + "/"):
+                stripped = path[len(self.prefix) :] or "/"
+                scope = dict(scope)
+                scope["path"] = stripped
+                # Deliberately NOT setting scope["root_path"]: Starlette's
+                # Mount matching assumes path still begins with root_path, and
+                # setting both would break the /static mount. Nothing here uses
+                # url_for, so the app has no other need for it.
+                raw = scope.get("raw_path")
+                if raw:
+                    encoded = self.prefix.encode()
+                    if raw.startswith(encoded):
+                        scope["raw_path"] = raw[len(encoded) :] or b"/"
+        await self.app(scope, receive, send)
 
 
 def _limit_threadpool(size: int) -> None:
@@ -131,50 +176,59 @@ def _install_middleware(app: FastAPI, settings: Settings) -> None:
         return response
 
 
+def _blocked() -> JSONResponse:
+    return JSONResponse(
+        status_code=403,
+        content={
+            "error": {
+                "code": "cross_origin_blocked",
+                "message": "Cross-origin requests are not allowed",
+                "detail": {},
+            }
+        },
+    )
+
+
 def _origin_violation(request: Request, settings: Settings):
     """Reject a cross-site unsafe request, if the browser tells us it is one."""
     fetch_site = request.headers.get("sec-fetch-site")
     if fetch_site and fetch_site not in ("same-origin", "same-site", "none"):
-        return JSONResponse(
-            status_code=403,
-            content={
-                "error": {
-                    "code": "cross_origin_blocked",
-                    "message": "Cross-origin requests are not allowed",
-                    "detail": {},
-                }
-            },
-        )
+        return _blocked()
+
     origin = request.headers.get("origin")
     if origin:
-        expected = settings.base_url or str(request.base_url).rstrip("/")
+        # Compare origins only. A browser's Origin header is scheme://host and
+        # never carries a path, so comparing it against a base URL that has one
+        # (https://host/voice-gen) would reject every write.
+        expected = settings.origin or f"{request.url.scheme}://{request.url.netloc}"
         if origin.rstrip("/") != expected.rstrip("/"):
-            return JSONResponse(
-                status_code=403,
-                content={
-                    "error": {
-                        "code": "cross_origin_blocked",
-                        "message": "Cross-origin requests are not allowed",
-                        "detail": {},
-                    }
-                },
-            )
+            return _blocked()
     return None
 
 
-def _wants_html(request: Request) -> bool:
-    return "text/html" in request.headers.get("accept", "") and not request.url.path.startswith(
-        "/api/"
-    )
+def _wants_html(request: Request, settings: Settings) -> bool:
+    """True for a browser navigation, false for an XHR that wants JSON.
+
+    The prefix is stripped first, so this stays correct whether or not the
+    proxy strips it - otherwise an expired session on /voice-gen/api/... would
+    answer an XHR with an HTML redirect instead of a 401.
+    """
+    path = request.url.path
+    if settings.root_path and path.startswith(settings.root_path):
+        path = path[len(settings.root_path) :] or "/"
+    return "text/html" in request.headers.get("accept", "") and not path.startswith("/api/")
 
 
-def _install_error_handlers(app: FastAPI) -> None:
+def _install_error_handlers(app: FastAPI, settings: Settings) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(request: Request, exc: AppError):
         # An unauthenticated page view should land on the login form, not on
         # a JSON body the browser will render as text.
-        if isinstance(exc, Unauthorized) and _wants_html(request):
-            return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
+        if isinstance(exc, Unauthorized) and _wants_html(request, settings):
+            target = settings.url("/login")
+            return RedirectResponse(
+                f"{target}?next={quote(request.url.path, safe='/')}", status_code=303
+            )
         return JSONResponse(status_code=exc.status, content=exc.payload(), headers=exc.headers)
 
     @app.exception_handler(RequestValidationError)
@@ -194,7 +248,7 @@ def _install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def handle_http(request: Request, exc: StarletteHTTPException):
-        if exc.status_code == 404 and _wants_html(request):
+        if exc.status_code == 404 and _wants_html(request, settings):
             return JSONResponse(
                 status_code=404,
                 content={"error": {"code": "not_found", "message": "Page not found", "detail": {}}},

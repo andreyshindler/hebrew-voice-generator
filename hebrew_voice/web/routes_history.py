@@ -49,7 +49,7 @@ async def list_generations(
     has_more = len(items) > limit
     items = items[:limit]
     return {
-        "items": [g.public(full=full) for g in items],
+        "items": [g.public(full=full, base=settings.root_path) for g in items],
         "has_more": has_more,
         "next_before": items[-1].created_at if items and has_more else None,
     }
@@ -63,7 +63,7 @@ async def get_generation(
 ):
     """Full record, including the original text - used to reload the composer."""
     generation = await _load(settings, gen_id, user)
-    return generation.public(full=True)
+    return generation.public(full=True, base=settings.root_path)
 
 
 def _content_disposition(title: str, extension: str, *, attachment: bool) -> str:

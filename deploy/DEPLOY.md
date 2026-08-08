@@ -1,6 +1,121 @@
 # Deploying to a VPS
 
-A runbook for Debian/Ubuntu. Adjust paths and the domain to taste.
+Two paths below. **[Docker under a subpath](#docker-under-a-subpath)** is the one to
+follow when the hostname's root already belongs to another app — that's the
+`srv1515969.hstgr.cloud/voice-gen` case. The [native systemd install](#native-install-at-the-root)
+after it is for owning a whole hostname.
+
+---
+
+# Docker under a subpath
+
+Target: `https://srv1515969.hstgr.cloud/voice-gen/`, with occy still served at `/`,
+behind the nginx that is already on the box.
+
+## 1. Get the code and configure
+
+```bash
+sudo mkdir -p /opt/hebrew-voice && cd /opt/hebrew-voice
+sudo git clone https://github.com/andreyshindler/hebrew-voice-generator .
+sudo cp .env.example .env
+sudo chmod 600 .env          # it holds the secret key and the invite codes
+sudo -e .env
+```
+
+The only lines that matter:
+
+```ini
+HV_ENV=production
+HV_SECRET_KEY=<python3 -c "import secrets; print(secrets.token_urlsafe(48))">
+# Full public URL including the subpath. HV_ROOT_PATH is derived from it, so
+# this one setting makes every link, redirect, and cookie carry /voice-gen.
+HV_BASE_URL=https://srv1515969.hstgr.cloud/voice-gen
+HV_INVITE_CODES=<a code you share with whoever should get in>
+```
+
+Leave `HV_DATA_DIR` alone — compose overrides it to `/data` inside the container.
+
+## 2. Start it
+
+```bash
+sudo docker compose up -d --build
+sudo docker compose ps                       # healthy?
+curl -s localhost:8080/healthz               # {"status":"ok",...}
+```
+
+The container listens on `127.0.0.1:8080` only; nothing is exposed publicly yet.
+
+## 3. Wire up nginx
+
+Open the existing server block for the hostname — the one that already proxies occy —
+and paste in the two blocks from [`nginx-subpath.conf.example`](nginx-subpath.conf.example):
+
+```bash
+sudo -e /etc/nginx/sites-available/<the-existing-site>
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+Order matters only in that `location /voice-gen/` is more specific than `location /`, so
+nginx picks it first regardless of where you paste it. occy keeps serving everything else.
+
+## 4. Create your account
+
+```bash
+sudo docker compose exec hebrew-voice hebrew-voice user add you@example.com
+```
+
+Or just register at `https://srv1515969.hstgr.cloud/voice-gen/signup` with the invite
+code. Either way the first account created becomes the admin.
+
+## 5. Verify
+
+```bash
+curl -sI https://srv1515969.hstgr.cloud/voice-gen/healthz    # 200
+curl -sI https://srv1515969.hstgr.cloud/                     # occy, unchanged
+curl -sI https://srv1515969.hstgr.cloud/voice-gen            # 301 -> /voice-gen/
+```
+
+Then in a browser: log in, generate a short line, play it, download the MP3. **This is
+the first time the real Microsoft TTS endpoint is contacted** — everything before it is
+faked in CI. If generation fails with `tts_upstream_failed`, check the container can
+reach the internet:
+
+```bash
+sudo docker compose exec hebrew-voice hebrew-voice say "בדיקה" -o /tmp/t.mp3
+```
+
+## Day-to-day
+
+```bash
+sudo docker compose logs -f                       # logs
+sudo docker compose exec hebrew-voice hebrew-voice user list
+sudo docker compose exec hebrew-voice hebrew-voice cleanup --dry-run
+sudo docker compose up -d --build                 # upgrade (migrations run at startup)
+```
+
+Back up the named volume — it holds the database and every generated file:
+
+```bash
+sudo docker compose exec hebrew-voice \
+    sqlite3 /data/hebrew-voice.db ".backup /data/backup.db"
+sudo docker cp hebrew-voice:/data/backup.db ./hv-$(date +%F).db
+```
+
+## If something looks wrong
+
+| Symptom | Cause |
+| --- | --- |
+| Page loads with no styling | You hit `/voice-gen` without the trailing slash and the `location = /voice-gen` redirect isn't installed. |
+| Login says "success" but you stay logged out | `HV_BASE_URL` is `http://` while `HV_SECURE_COOKIES` is on, so the browser drops the cookie. The app refuses to boot in this state — check you actually restarted it. |
+| Every action returns 403 | `HV_BASE_URL`'s host doesn't match the hostname you're browsing. The origin check compares hosts. |
+| 504 on long text | nginx `proxy_read_timeout` is below `HV_SYNTH_TIMEOUT`. The example sets 300s vs 180s. |
+
+---
+
+# Native install at the root
+
+A runbook for Debian/Ubuntu when the app owns a whole hostname. Adjust paths and the
+domain to taste.
 
 ## 1. System user and directories
 

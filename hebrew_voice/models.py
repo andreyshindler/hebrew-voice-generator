@@ -126,8 +126,14 @@ class Generation:
     def duration(self) -> float:
         return self.duration_ms / 1000.0
 
-    def public(self, *, full: bool = False) -> Dict[str, Any]:
-        """JSON shape for the API. ``full`` adds the text, for replay."""
+    def public(self, *, full: bool = False, base: str = "") -> Dict[str, Any]:
+        """JSON shape for the API. ``full`` adds the text, for replay.
+
+        ``base`` is the app's URL prefix (``/voice-gen``). These URLs go
+        straight into ``<audio src>``, the ``<track>`` element, and the download
+        links, so they have to be correct for the deployment, not just for the
+        API.
+        """
         data: Dict[str, Any] = {
             "id": self.id,
             "created_at": self.created_at,
@@ -141,9 +147,9 @@ class Generation:
             "audio_bytes": self.audio_bytes,
             "cue_count": self.cue_count,
             "urls": {
-                "audio": f"/api/generations/{self.id}/audio.mp3",
-                "srt": f"/api/generations/{self.id}/subtitles.srt" if self.srt_rel else None,
-                "vtt": f"/api/generations/{self.id}/subtitles.vtt" if self.vtt_rel else None,
+                "audio": f"{base}/api/generations/{self.id}/audio.mp3",
+                "srt": f"{base}/api/generations/{self.id}/subtitles.srt" if self.srt_rel else None,
+                "vtt": f"{base}/api/generations/{self.id}/subtitles.vtt" if self.vtt_rel else None,
             },
         }
         if full:

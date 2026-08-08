@@ -6,8 +6,9 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
+from urllib.parse import urlsplit
 
-__all__ = ["Settings", "load_dotenv", "get_settings"]
+__all__ = ["Settings", "load_dotenv", "get_settings", "normalize_root_path"]
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -69,6 +70,21 @@ def _float(env: Mapping[str, str], key: str, default: float) -> float:
         raise ValueError(f"{key} must be a number, got {raw!r}") from exc
 
 
+def normalize_root_path(value: str) -> str:
+    """Normalize a URL prefix to ``""`` (root) or ``"/voice-gen"``.
+
+    Accepts the sloppy forms people actually type - ``voice-gen``,
+    ``/voice-gen/``, ``/`` - and returns a value that can be concatenated with
+    a leading-slash path without producing a double slash.
+    """
+    cleaned = (value or "").strip()
+    if not cleaned or cleaned == "/":
+        return ""
+    if not cleaned.startswith("/"):
+        cleaned = "/" + cleaned
+    return cleaned.rstrip("/")
+
+
 @dataclass(frozen=True)
 class Settings:
     """Everything configurable, all of it via ``HV_*`` environment variables."""
@@ -80,7 +96,10 @@ class Settings:
 
     host: str = "127.0.0.1"
     port: int = 8080
+    #: Full public URL, including any subpath: https://host/voice-gen
     base_url: str = ""
+    #: URL prefix the app is served under. Derived from base_url when unset.
+    root_path: str = ""
     trust_proxy: bool = True
 
     # Auth
@@ -126,6 +145,35 @@ class Settings:
         return self.env.lower().startswith("prod")
 
     @property
+    def origin(self) -> str:
+        """``scheme://host[:port]`` from :attr:`base_url`, with no path.
+
+        A browser's ``Origin`` header never contains a path, so this - not
+        ``base_url`` - is what cross-origin checks must compare against.
+        """
+        if not self.base_url:
+            return ""
+        parts = urlsplit(self.base_url)
+        if not parts.scheme or not parts.netloc:
+            return ""
+        return f"{parts.scheme}://{parts.netloc}"
+
+    @property
+    def cookie_path(self) -> str:
+        """Scope cookies to the app's prefix, not the whole host.
+
+        Under a subpath this keeps the session cookie from being sent to every
+        other app sharing the hostname.
+        """
+        return f"{self.root_path}/" if self.root_path else "/"
+
+    def url(self, path: str = "/") -> str:
+        """Prefix an app-absolute path, e.g. ``/login`` -> ``/voice-gen/login``."""
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{self.root_path}{path}"
+
+    @property
     def audio_dir(self) -> Path:
         return self.data_dir / "audio"
 
@@ -137,6 +185,13 @@ class Settings:
         db_path = env.get("HV_DB_PATH") or str(data_dir / "hebrew-voice.db")
         codes = [c.strip() for c in (env.get("HV_INVITE_CODES") or "").split(",") if c.strip()]
 
+        base_url = (env.get("HV_BASE_URL") or "").rstrip("/")
+        # Setting HV_BASE_URL=https://host/voice-gen is enough; the prefix is
+        # taken from its path unless HV_ROOT_PATH says otherwise.
+        root_path = normalize_root_path(
+            env.get("HV_ROOT_PATH") if env.get("HV_ROOT_PATH") else urlsplit(base_url).path
+        )
+
         settings = cls(
             env=env.get("HV_ENV") or "development",
             secret_key=env.get("HV_SECRET_KEY") or "dev-insecure",
@@ -144,7 +199,8 @@ class Settings:
             db_path=Path(db_path).expanduser(),
             host=env.get("HV_HOST") or "127.0.0.1",
             port=_int(env, "HV_PORT", 8080),
-            base_url=(env.get("HV_BASE_URL") or "").rstrip("/"),
+            base_url=base_url,
+            root_path=root_path,
             trust_proxy=_bool(env, "HV_TRUST_PROXY", True),
             secure_cookies=_bool(env, "HV_SECURE_COOKIES", True),
             session_ttl_days=_int(env, "HV_SESSION_TTL_DAYS", 30),
@@ -180,6 +236,12 @@ class Settings:
     def validate(self) -> None:
         """Refuse to boot with a configuration that is unsafe in production."""
         problems: List[str] = []
+        if self.root_path and not self.root_path.startswith("/"):
+            problems.append("HV_ROOT_PATH must start with '/'")
+        if self.base_url and not self.origin:
+            problems.append(
+                f"HV_BASE_URL must be a full URL like https://host/prefix, got {self.base_url!r}"
+            )
         if self.is_production:
             if self.secret_key in ("", "dev-insecure"):
                 problems.append("HV_SECRET_KEY must be set in production")
@@ -192,6 +254,13 @@ class Settings:
                 )
             if not self.base_url:
                 problems.append("HV_BASE_URL must be set in production (origin checks)")
+            elif self.secure_cookies and not self.base_url.startswith("https://"):
+                # Secure cookies are never sent over http, so the user would
+                # log in successfully and then appear logged out.
+                problems.append(
+                    "HV_BASE_URL must be https when HV_SECURE_COOKIES is on, "
+                    f"got {self.base_url!r}"
+                )
         if self.max_chars < 1:
             problems.append("HV_MAX_CHARS must be positive")
         if self.max_concurrent_synth < 1:

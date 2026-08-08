@@ -239,6 +239,9 @@ def prepare(
     if symbols:
         text = expand_symbols(text)
     text = _WS_RE.sub(" ", text)
+    # Symbol expansion pads its replacements, which can leave "250 שקלים ."
+    # - a stray gap the voice reads as a pause.
+    text = re.sub(r" +([,.!?;:])", r"\1", text)
     text = re.sub(r" *\n *", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

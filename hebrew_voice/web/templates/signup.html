@@ -34,10 +34,10 @@
     <button type="submit" class="btn btn-primary btn-block">יצירת חשבון</button>
   </form>
 
-  <p class="auth-alt">כבר רשומים? <a href="/login">כניסה</a></p>
+  <p class="auth-alt">כבר רשומים? <a href="{{ base }}/login">כניסה</a></p>
 </main>
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="/static/js/auth.js?v={{ version }}"></script>
+<script type="module" src="{{ base }}/static/js/auth.js?v={{ version }}"></script>
 {% endblock %}

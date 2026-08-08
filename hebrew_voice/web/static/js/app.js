@@ -1,7 +1,7 @@
 /* Entry point: reads the bootstrap payload, wires the modules together,
    and owns the generate action. */
 
-import { api } from "./api.js";
+import { api, url } from "./api.js";
 import { Composer } from "./composer.js";
 import { History } from "./history.js";
 import { Player } from "./player.js";
@@ -106,7 +106,7 @@ $("#logout").addEventListener("click", async () => {
   } catch (error) {
     /* the cookie is cleared server-side either way */
   }
-  window.location.href = "/login";
+  window.location.href = url("/login");
 });
 
 // Refresh the preview the first time the advanced panel is opened.
