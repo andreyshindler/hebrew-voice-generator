@@ -208,11 +208,12 @@ check, a strict CSP with no inline script, and someone else's generation id retu
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest          # 187 tests, no network needed
+python -m pytest          # the whole suite, no network needed
 ```
 
-The suite never touches the real service: an autouse fixture replaces the edge-tts
-transport with one that raises if called, and tests install a fake in its place. Tests
+The suite never touches the real service: autouse fixtures replace the edge-tts transport
+and the SMTP sender with ones that raise if called, and tests install fakes in their
+place - so forgetting a fake fails loudly instead of hanging on a live connection. Tests
 marked `network` are excluded by default and are the ones to run against a live
 connection after deploying.
 
