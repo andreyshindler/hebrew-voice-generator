@@ -232,6 +232,15 @@ Useful flags:
 HV_HEALTH_TIMEOUT=180 ./deploy/deploy.sh   # a slow box
 ```
 
+### Redeploying without a commit
+
+The workflow has a **Run workflow** button in the Actions tab (from
+`workflow_dispatch`). Use it after editing `.env` on the box, or to rebuild the current
+`main` for any other reason. It runs the same two jobs, so the tests still gate it.
+
+On the box itself, `./deploy/deploy.sh --no-pull` rebuilds the working tree without
+fetching.
+
 ### When a run goes red
 
 | Symptom | Cause |
