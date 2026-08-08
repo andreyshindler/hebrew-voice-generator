@@ -14,6 +14,12 @@ behind the nginx that is already on the box.
 
 ## 1. Get the code and configure
 
+Any directory works — nothing in the app or the deploy script hardcodes a path. These
+examples use `/opt/hebrew-voice`; on this box the checkout is
+`~/projects/hebrew-voice-generator`, so read that for `/opt/hebrew-voice` throughout.
+If you own the directory and are in the `docker` group, drop the `sudo` from the commands
+below too.
+
 ```bash
 sudo mkdir -p /opt/hebrew-voice && cd /opt/hebrew-voice
 sudo git clone https://github.com/andreyshindler/hebrew-voice-generator .
@@ -131,28 +137,41 @@ Once this is set up, merging to `main` rebuilds and restarts the container by it
 GitHub Actions runs the test suite, then SSHes in and runs
 [`deploy/deploy.sh`](deploy.sh).
 
-### A dedicated user that can run Docker but not much else
+The script works out its own checkout from where it lives, so nothing below assumes a
+particular directory. The examples use `komodo` and
+`~/projects/hebrew-voice-generator`; substitute your own.
 
-Today everything under `/opt/hebrew-voice` is root-owned and driven with `sudo`. Give the
-deploy its own unprivileged user instead — membership of the `docker` group means no
-`sudo` rule anywhere:
+### Let the account drive Docker without sudo
+
+An SSH forced command cannot type a sudo password, so the account running the deploy
+must reach the Docker socket directly:
 
 ```bash
-sudo useradd -m -G docker deploy
-sudo chown -R deploy:deploy /opt/hebrew-voice
-sudo -u deploy ssh-keygen -t ed25519 -f /home/deploy/.ssh/deploy_key -N ""
+sudo usermod -aG docker komodo
+# Group membership only applies to a NEW session - log out and back in, then:
+docker info >/dev/null && echo "ok"
 ```
 
-> Being in the `docker` group is equivalent to root on the host — that's true of any
-> Docker deploy, and it's why the key below can't open a shell.
+> Being in the `docker` group is equivalent to root on the host. That's true of any
+> Docker-based deploy, and it's exactly why the key below is pinned to one script.
 
-### Pin the key to the script
+A separate `deploy` user is tidier if you'd rather not attach a CI key to your login
+account — create it with `sudo useradd -m -G docker deploy`, give it ownership of the
+checkout, and read `deploy` for `komodo` throughout.
 
-Put the **public** key in `/home/deploy/.ssh/authorized_keys` prefixed with a forced
-command, all on one line:
+### Generate the key
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/hv_deploy_key -N "" -C "hebrew-voice deploy"
+```
+
+### Pin it to the script
+
+Add the **public** key to `~/.ssh/authorized_keys` with a forced command in front, all on
+one line — and use the absolute path to *your* checkout:
 
 ```
-command="/opt/hebrew-voice/deploy/deploy.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... deploy@github
+command="/home/komodo/projects/hebrew-voice-generator/deploy/deploy.sh",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA... hebrew-voice deploy
 ```
 
 That prefix is what makes an SSH deploy key acceptable. The key cannot open a shell,
@@ -160,9 +179,11 @@ forward a port, or run any other command — only this script. If the GitHub sec
 leaks, the worst it buys is a redeploy of your own `main`.
 
 ```bash
-sudo chown -R deploy:deploy /home/deploy/.ssh
-sudo chmod 700 /home/deploy/.ssh && sudo chmod 600 /home/deploy/.ssh/authorized_keys
+chmod 700 ~/.ssh && chmod 600 ~/.ssh/authorized_keys
 ```
+
+Because that key now behaves differently from your normal login key, keep your existing
+`authorized_keys` entries — a forced command applies only to the key it prefixes.
 
 ### Repository secrets
 
@@ -171,8 +192,8 @@ Settings → Secrets and variables → Actions:
 | Secret | Value |
 | --- | --- |
 | `SSH_HOST` | `srv1515969.hstgr.cloud` |
-| `SSH_USER` | `deploy` |
-| `SSH_KEY` | the **private** key: `sudo cat /home/deploy/.ssh/deploy_key` |
+| `SSH_USER` | `komodo` |
+| `SSH_KEY` | the **private** key: `cat ~/.ssh/hv_deploy_key` |
 | `SSH_KNOWN_HOSTS` | `ssh-keyscan -t ed25519 srv1515969.hstgr.cloud` |
 | `SSH_PORT` | only if sshd isn't on 22 |
 
@@ -185,9 +206,10 @@ port 22.
 In this order — each step rules out a different failure:
 
 ```bash
-sudo -u deploy /opt/hebrew-voice/deploy/deploy.sh     # 1. the script itself
-ssh -i /home/deploy/.ssh/deploy_key deploy@localhost  # 2. the forced command runs it
-                                                      #    instead of giving a shell
+cd ~/projects/hebrew-voice-generator
+./deploy/deploy.sh                                # 1. the script itself
+ssh -i ~/.ssh/hv_deploy_key komodo@localhost      # 2. the forced command runs it
+                                                  #    instead of giving a shell
 ```
 
 Then merge something trivial and watch the run in the Actions tab.
@@ -214,10 +236,11 @@ HV_HEALTH_TIMEOUT=180 ./deploy/deploy.sh   # a slow box
 
 | Symptom | Cause |
 | --- | --- |
-| `permission denied` on the docker socket | The `docker` group isn't applied until `deploy` logs in again. `sudo -u deploy -i` or reboot. |
+| `cannot talk to the Docker daemon` | The account isn't in the `docker` group, or it is but this session predates the change — log out and back in. As a fallback, `HV_DOCKER="sudo docker"` (needs a NOPASSWD rule to work over SSH). |
 | The SSH step hangs then times out | The VPS firewall is dropping GitHub's runners. Check `sudo ufw status`. |
 | `Host key verification failed` | `SSH_KNOWN_HOSTS` is missing, or the host key changed. Re-run `ssh-keyscan`. |
-| The script runs but you get a shell instead | The forced command isn't on the same line as the key in `authorized_keys`. |
+| You get a shell instead of a deploy | The forced command isn't on the same line as the key in `authorized_keys`. |
+| `No such file or directory` from sshd | The path in the forced command is wrong. It must be the absolute path to `deploy/deploy.sh` inside your checkout. |
 | `another deploy is already running` | A previous run is still going, or died holding the lock: `rm /tmp/hebrew-voice-deploy.lock`. |
 | Healthy locally, red in Actions | The health probe runs inside the container, so this is the app failing to boot. `docker compose logs --tail=100`. |
 
