@@ -19,6 +19,10 @@ location = /voice-gen {
 }
 
 location /voice-gen/ {
+    # Point this at HV_PUBLISH_PORT. 8080 is the default, but check nothing
+    # else on the box already has it:
+    #     sudo nginx -T | grep -oE '127\.0\.0\.1:[0-9]+' | sort -u
+    #
     # The trailing slash on proxy_pass strips the /voice-gen/ prefix before
     # forwarding. The app also tolerates the prefix arriving intact, so
     # `proxy_pass http://127.0.0.1:8080;` works too - but keep the slash: it

@@ -35,15 +35,30 @@ HV_INVITE_CODES=<a code you share with whoever should get in>
 
 Leave `HV_DATA_DIR` alone — compose overrides it to `/data` inside the container.
 
+**Check the host port is free before starting.** A busy VPS often already has something
+on 8080:
+
+```bash
+sudo ss -ltnp | grep -E '127.0.0.1:(8080|8085|8090|8095)'
+sudo nginx -T | grep -oE '127\.0\.0\.1:[0-9]+' | sort -u   # what the proxy already uses
+```
+
+If 8080 is taken, pick a free port and add it to `.env` — the container still listens on
+8080 internally, so only the published side moves:
+
+```ini
+HV_PUBLISH_PORT=8095
+```
+
 ## 2. Start it
 
 ```bash
 sudo docker compose up -d --build
 sudo docker compose ps                       # healthy?
-curl -s localhost:8080/healthz               # {"status":"ok",...}
+curl -s localhost:8080/healthz               # or your HV_PUBLISH_PORT
 ```
 
-The container listens on `127.0.0.1:8080` only; nothing is exposed publicly yet.
+The container is published on `127.0.0.1` only; nothing is exposed publicly yet.
 
 ## 3. Wire up nginx
 
