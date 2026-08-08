@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}הרשמה · מחולל קול עברי{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<main class="auth-card">
+  <div class="auth-brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M16 4a4 4 0 0 1 4 4v8a4 4 0 0 1-8 0V8a4 4 0 0 1 4-4Z"/>
+      <path d="M8 15a8 8 0 0 0 16 0M16 23v5M11 28h10" fill="none" stroke-width="2.5"
+            stroke-linecap="round"/>
+    </svg>
+    <h1>יצירת חשבון</h1>
+  </div>
+  <p class="auth-subtitle">ההרשמה פתוחה למי שקיבל קוד הזמנה</p>
+
+  <form id="signup-form" class="auth-form" novalidate>
+    <label class="field">
+      <span class="field-label">כתובת אימייל</span>
+      <input type="email" name="email" autocomplete="username" required dir="ltr"
+             placeholder="you@example.com">
+    </label>
+    <label class="field">
+      <span class="field-label">סיסמה</span>
+      <input type="password" name="password" autocomplete="new-password" required
+             minlength="10">
+      <span class="field-hint">לפחות 10 תווים</span>
+    </label>
+    <label class="field">
+      <span class="field-label">קוד הזמנה</span>
+      <input type="text" name="invite_code" required dir="ltr" autocomplete="off">
+    </label>
+    <p class="form-error" id="form-error" role="alert" hidden></p>
+    <button type="submit" class="btn btn-primary btn-block">יצירת חשבון</button>
+  </form>
+
+  <p class="auth-alt">כבר רשומים? <a href="{{ base }}/login">כניסה</a></p>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ base }}/static/js/auth.js?v={{ version }}"></script>
+{% endblock %}

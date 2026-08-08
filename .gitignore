@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local runtime state - never commit the database or generated audio
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+*.mp3
+*.srt
+*.vtt

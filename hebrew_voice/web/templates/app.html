@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block title %}מחולל קול עברי{% endblock %}
+{% block body_class %}app-page{% endblock %}
+
+{% block content %}
+<script type="application/json" id="bootstrap">{{ bootstrap | safe }}</script>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 4a4 4 0 0 1 4 4v8a4 4 0 0 1-8 0V8a4 4 0 0 1 4-4Z"/>
+        <path d="M8 15a8 8 0 0 0 16 0M16 23v5M11 28h10" fill="none" stroke-width="2.5"
+              stroke-linecap="round"/>
+      </svg>
+      <span class="brand-name">מחולל קול עברי</span>
+    </div>
+
+    <div class="quota" id="quota" title="מכסת התווים היומית">
+      <div class="quota-bar"><div class="quota-fill" id="quota-fill"></div></div>
+      <span class="quota-text" id="quota-text"></span>
+    </div>
+
+    <div class="topbar-actions">
+      <button type="button" class="icon-btn" id="theme-toggle" title="החלפת ערכת צבעים"
+              aria-label="החלפת ערכת צבעים">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-sun">
+          <circle cx="12" cy="12" r="4.5"/>
+          <path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M19.1 4.9l-1.8 1.8M6.7 17.3l-1.8 1.8"
+                fill="none" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-moon">
+          <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/>
+        </svg>
+      </button>
+      <span class="user-email" dir="ltr">{{ user.email }}</span>
+      <button type="button" class="btn btn-ghost" id="logout">יציאה</button>
+    </div>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ---------------------------------------------------------------- -->
+  <section class="panel composer" aria-labelledby="composer-title">
+    <h2 class="panel-title" id="composer-title">הטקסט להקראה</h2>
+
+    <div class="textarea-wrap" id="drop-zone">
+      <textarea id="text" dir="rtl" spellcheck="false" rows="10"
+                placeholder="הדביקו כאן את הטקסט בעברית, או גררו לכאן קובץ טקסט"
+                aria-describedby="char-count"></textarea>
+      <div class="drop-hint" aria-hidden="true">שחררו כאן את הקובץ</div>
+    </div>
+
+    <div class="composer-meta">
+      <span class="char-count" id="char-count">0</span>
+      <div class="composer-meta-actions">
+        <button type="button" class="link-btn" id="upload-btn">העלאת קובץ טקסט</button>
+        <button type="button" class="link-btn" id="clear-btn">ניקוי</button>
+      </div>
+      <input type="file" id="file-input" accept=".txt,text/plain" hidden>
+    </div>
+
+    <fieldset class="control-group">
+      <legend>קול</legend>
+      <div class="voice-picker" id="voice-picker" role="radiogroup" aria-label="בחירת קול"></div>
+    </fieldset>
+
+    <fieldset class="control-group">
+      <legend>עיצוב הדיבור</legend>
+      <div class="slider-row">
+        <label for="rate">מהירות</label>
+        <input type="range" id="rate" min="-50" max="100" step="5" value="0">
+        <output for="rate" id="rate-out" class="slider-value">‎+0%</output>
+      </div>
+      <div class="slider-row">
+        <label for="pitch">גובה</label>
+        <input type="range" id="pitch" min="-50" max="50" step="5" value="0">
+        <output for="pitch" id="pitch-out" class="slider-value">‎+0Hz</output>
+      </div>
+      <div class="slider-row">
+        <label for="volume">עוצמה</label>
+        <input type="range" id="volume" min="-50" max="50" step="5" value="0">
+        <output for="volume" id="volume-out" class="slider-value">‎+0%</output>
+      </div>
+      <button type="button" class="link-btn reset-sliders" id="reset-sliders">
+        איפוס לברירת מחדל
+      </button>
+    </fieldset>
+
+    <details class="advanced" id="advanced">
+      <summary>הגדרות מתקדמות</summary>
+      <div class="advanced-body">
+        <p class="advanced-note">
+          כך מוכן הטקסט לפני ההקראה. אם הטקסט מכיל כתובות אימייל או נוסחאות,
+          כדאי לכבות את הקראת הסמלים.
+        </p>
+        <label class="switch">
+          <input type="checkbox" id="keep_niqqud">
+          <span>שמירה על ניקוד <small>ברירת מחדל: הניקוד מוסר</small></span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="expand_abbreviations" checked>
+          <span>פענוח קיצורים <small>עמ׳ ← עמוד, ע״י ← על ידי</small></span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="expand_acronyms" checked>
+          <span>ראשי תיבות כמילה <small>צה״ל ייקרא "צהל" ולא אות־אות</small></span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="expand_symbols" checked>
+          <span>הקראת סמלים <small>₪ ← שקלים, % ← אחוז</small></span>
+        </label>
+
+        <div class="preview-box">
+          <div class="preview-head">
+            <span>כך זה יוקרא</span>
+            <span class="preview-est" id="preview-est"></span>
+          </div>
+          <p class="preview-text" id="preview-text" dir="rtl"></p>
+        </div>
+      </div>
+    </details>
+
+    <label class="switch subtitles-switch">
+      <input type="checkbox" id="subtitles" checked>
+      <span>יצירת כתוביות <small>קובצי SRT ו‑VTT מסונכרנים</small></span>
+    </label>
+
+    <div class="generate-bar">
+      <button type="button" class="btn btn-primary btn-generate" id="generate">
+        <span class="btn-label">צור שמע</span>
+        <kbd>Ctrl</kbd><kbd>↵</kbd>
+      </button>
+      <span class="generate-status" id="generate-status" aria-live="polite"></span>
+    </div>
+  </section>
+
+  <!-- ---------------------------------------------------------------- -->
+  <aside class="side">
+    <section class="panel result" id="result-panel" aria-labelledby="result-title" hidden>
+      <h2 class="panel-title" id="result-title">התוצאה</h2>
+      <audio id="player" controls preload="metadata" crossorigin="anonymous"></audio>
+      <dl class="result-stats" id="result-stats"></dl>
+      <div class="download-row" id="download-row"></div>
+      <div class="result-tabs">
+        <button type="button" class="tab is-active" data-tab="prepared">טקסט מוקרא</button>
+        <button type="button" class="tab" data-tab="cues">כתוביות</button>
+      </div>
+      <div class="tab-panel" id="tab-prepared" dir="rtl"></div>
+      <div class="tab-panel" id="tab-cues" hidden></div>
+    </section>
+
+    <section class="panel history" aria-labelledby="history-title">
+      <h2 class="panel-title" id="history-title">היסטוריה</h2>
+      <ul class="history-list" id="history-list"></ul>
+      <p class="empty-state" id="history-empty">עדיין לא נוצרו קבצים.</p>
+      <button type="button" class="btn btn-ghost btn-block" id="history-more" hidden>
+        טען עוד
+      </button>
+    </section>
+  </aside>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ base }}/static/js/app.js?v={{ version }}"></script>
+{% endblock %}

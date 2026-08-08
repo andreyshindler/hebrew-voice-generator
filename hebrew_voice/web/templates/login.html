@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}כניסה · מחולל קול עברי{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block content %}
+<main class="auth-card">
+  <div class="auth-brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M16 4a4 4 0 0 1 4 4v8a4 4 0 0 1-8 0V8a4 4 0 0 1 4-4Z"/>
+      <path d="M8 15a8 8 0 0 0 16 0M16 23v5M11 28h10" fill="none" stroke-width="2.5"
+            stroke-linecap="round"/>
+    </svg>
+    <h1>מחולל קול עברי</h1>
+  </div>
+  <p class="auth-subtitle">הפכו טקסט בעברית לקובץ שמע איכותי</p>
+
+  <form id="login-form" class="auth-form" novalidate>
+    <label class="field">
+      <span class="field-label">כתובת אימייל</span>
+      <input type="email" name="email" autocomplete="username" required dir="ltr"
+             placeholder="you@example.com">
+    </label>
+    <label class="field">
+      <span class="field-label">סיסמה</span>
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <p class="form-error" id="form-error" role="alert" hidden></p>
+    <button type="submit" class="btn btn-primary btn-block">כניסה</button>
+  </form>
+
+  {% if signup_enabled %}
+  <p class="auth-alt">אין לכם חשבון? <a href="{{ base }}/signup">הרשמה עם קוד הזמנה</a></p>
+  {% endif %}
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="{{ base }}/static/js/auth.js?v={{ version }}"></script>
+{% endblock %}

@@ -1,0 +1,49 @@
+[Unit]
+Description=Hebrew Voice Generator
+Documentation=https://github.com/andreyshindler/hebrew-voice-generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=hebrewvoice
+Group=hebrewvoice
+WorkingDirectory=/opt/hebrew-voice
+
+# Creates and owns /var/lib/hebrew-voice with mode 0700.
+StateDirectory=hebrew-voice
+StateDirectoryMode=0700
+
+# Holds HV_SECRET_KEY and the invite codes; chmod 0640, root:hebrewvoice.
+EnvironmentFile=/etc/hebrew-voice/env
+
+# --workers 1 is required, not a default worth tuning: the synthesis
+# concurrency cap, the per-user gate, and the rate limiter are all in-process.
+# More workers would silently multiply every limit.
+ExecStart=/opt/hebrew-voice/.venv/bin/uvicorn hebrew_voice.web.app:app \
+    --host 127.0.0.1 --port 8080 --workers 1 \
+    --proxy-headers --forwarded-allow-ips=127.0.0.1
+
+Restart=always
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

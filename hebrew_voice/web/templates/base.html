@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl" data-base="{{ base }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>{% block title %}מחולל קול עברי{% endblock %}</title>
+  <link rel="icon" href="{{ base }}/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ base }}/static/css/app.css?v={{ version }}">
+  <!-- Loaded synchronously as a file (not inline) so the theme is applied
+       before first paint without needing 'unsafe-inline' in the CSP. -->
+  <script src="{{ base }}/static/js/theme.js?v={{ version }}"></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% block content %}{% endblock %}
+  <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
