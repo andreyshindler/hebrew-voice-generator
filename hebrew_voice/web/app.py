@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .. import cleanup, db, storage
+from ..mailer import mailer_from_settings
 from ..config import Settings, get_settings as load_settings
 from ..errors import AppError, Unauthorized
 from . import routes_auth, routes_history, routes_pages, routes_synth
@@ -45,11 +46,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         storage.ensure_data_dir(settings.data_dir)
         _limit_threadpool(settings.thread_pool_size)
         log.info(
-            "ready: max_concurrent=%d per_user=%d daily_quota=%d max_chars=%d",
+            "ready: max_concurrent=%d per_user=%d daily_quota=%d max_chars=%d "
+            "verify_email=%s mailer=%s",
             settings.max_concurrent_synth,
             settings.max_concurrent_per_user,
             settings.daily_char_quota,
             settings.max_chars,
+            settings.require_email_verification,
+            type(app.state.mailer).__name__,
         )
         task = asyncio.create_task(_cleanup_loop(settings))
         try:
@@ -71,6 +75,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.runner = SynthRunner(settings)
+    app.state.mailer = mailer_from_settings(settings)
     app.state.templates = Jinja2Templates(directory=str(HERE / "templates"))
     # Templates build every link as {{ base }}/...; empty at the root.
     app.state.templates.env.globals["base"] = settings.root_path

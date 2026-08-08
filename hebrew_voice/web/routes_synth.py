@@ -9,12 +9,16 @@ from ..errors import PayloadTooLarge, RateLimited
 from ..models import User
 from ..text import estimate_seconds, has_hebrew, prepare
 from ..voices import catalog
-from .deps import get_settings, require_csrf, require_user
+from .deps import get_settings, require_csrf, require_user, require_verified
 from .schemas import PreviewRequest, SynthesizeRequest
 
 # Auth is a router-level dependency, so a new endpoint here is protected by
 # default rather than by remembering to add it.
-router = APIRouter(prefix="/api", tags=["synthesis"], dependencies=[Depends(require_user)])
+router = APIRouter(
+    prefix="/api",
+    tags=["synthesis"],
+    dependencies=[Depends(require_user), Depends(require_verified)],
+)
 
 
 @router.get("/voices")

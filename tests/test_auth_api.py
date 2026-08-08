@@ -7,7 +7,7 @@ import pytest
 from hebrew_voice import repo, security
 from hebrew_voice.web.app import create_app
 
-from .conftest import EMAIL, INVITE, PASSWORD, csrf
+from .conftest import EMAIL, INVITE, PASSWORD, csrf, register_verified
 
 
 def signup(client, **overrides):
@@ -17,15 +17,17 @@ def signup(client, **overrides):
 
 
 class TestSignup:
-    def test_creates_an_account_and_signs_in(self, client):
+    def test_creates_an_account_pending_verification(self, client, settings):
         response = signup(client)
-        assert response.status_code == 201
-        assert response.json()["user"]["email"] == EMAIL
-        assert client.cookies.get("hv_session")
-        assert client.cookies.get("hv_csrf")
+        # 202, not 201: the account exists but is inert until confirmed.
+        assert response.status_code == 202
+        assert response.json() == {"status": "verification_sent", "email": EMAIL}
+        assert not client.cookies.get("hv_session")
+        assert repo.get_user_by_email(settings.db_path, EMAIL) is not None
 
-    def test_first_account_is_an_admin(self, client):
-        assert signup(client).json()["user"]["is_admin"] is True
+    def test_first_account_is_an_admin(self, client, settings):
+        signup(client)
+        assert repo.get_user_by_email(settings.db_path, EMAIL).is_admin is True
 
     def test_rejects_a_wrong_invite_code(self, client):
         response = signup(client, invite_code="nope")
@@ -56,15 +58,15 @@ class TestSignup:
 
 
 class TestLogin:
-    def test_round_trip(self, client):
-        signup(client)
+    def test_round_trip(self, client, settings):
+        register_verified(client, settings)
         client.cookies.clear()
         response = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
         assert response.status_code == 200
         assert client.get("/api/auth/me").json()["user"]["email"] == EMAIL
 
-    def test_email_is_case_insensitive(self, client):
-        signup(client)
+    def test_email_is_case_insensitive(self, client, settings):
+        register_verified(client, settings)
         client.cookies.clear()
         response = client.post(
             "/api/auth/login", json={"email": EMAIL.upper(), "password": PASSWORD}
@@ -100,7 +102,7 @@ class TestLogin:
         ).status_code in (423, 429)
 
     def test_a_disabled_account_cannot_sign_in(self, client, settings):
-        signup(client)
+        register_verified(client, settings)
         user = repo.get_user_by_email(settings.db_path, EMAIL)
         repo.set_active(settings.db_path, user.id, False)
         client.cookies.clear()
@@ -155,7 +157,12 @@ class TestProtection:
         assert response.status_code == 401, f"{method} {path} was reachable"
 
     def test_every_api_route_is_covered_by_this_list(self, app):
-        allowlist = {"/api/auth/login", "/api/auth/signup", "/api/auth/logout"}
+        allowlist = {
+            "/api/auth/login",
+            "/api/auth/signup",
+            "/api/auth/logout",
+            "/api/auth/resend-verification",
+        }
         documented = {path for _method, path in self.PROTECTED} | allowlist
         for route in _api_routes(app):
             template = route.replace("{gen_id}", "a" * 32)

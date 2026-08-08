@@ -14,10 +14,12 @@ from ..config import Settings
 from ..errors import NotFound
 from ..models import Generation, User
 from ..storage import GENERATION_ID_RE
-from .deps import get_settings, require_csrf, require_user
+from .deps import get_settings, require_csrf, require_user, require_verified
 
 router = APIRouter(
-    prefix="/api/generations", tags=["history"], dependencies=[Depends(require_user)]
+    prefix="/api/generations",
+    tags=["history"],
+    dependencies=[Depends(require_user), Depends(require_verified)],
 )
 
 #: Ids are opaque hex, so a cached artifact can never change under its URL.

@@ -20,6 +20,7 @@ __all__ = [
     "needs_rehash",
     "new_session_token",
     "hash_session_token",
+    "new_email_token",
     "new_csrf_token",
     "constant_time_equals",
     "DEFAULT_N",
@@ -117,6 +118,11 @@ def new_session_token() -> str:
 def hash_session_token(token: str) -> str:
     """What actually goes in the database, so a DB leak yields no cookies."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def new_email_token() -> str:
+    """A token for an emailed link. Only its SHA-256 is stored."""
+    return secrets.token_urlsafe(32)
 
 
 def new_csrf_token() -> str:

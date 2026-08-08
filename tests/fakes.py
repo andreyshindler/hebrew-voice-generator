@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import re
+from email.message import EmailMessage
 from typing import AsyncIterator, List, Optional
+
+from hebrew_voice.mailer import MailError
 
 TICKS = 10_000_000  # 100ns units per second, same as the real service
 
@@ -109,3 +113,50 @@ class _Blocking(FakeCommunicate):
         await self.event.wait()
         async for chunk in FakeCommunicate.stream(self):
             yield chunk
+
+
+# --------------------------------------------------------------------------
+# Mail
+# --------------------------------------------------------------------------
+
+LINK_RE = re.compile(r"https?://\S+/verify\?token=[A-Za-z0-9_\-]+")
+
+
+class RecordingMailer:
+    """Captures messages instead of sending them.
+
+    Tests pull the verification link straight out of the body and follow it,
+    which exercises the same path a real inbox would.
+    """
+
+    def __init__(self) -> None:
+        self.sent: List[EmailMessage] = []
+
+    def send(self, message: EmailMessage) -> None:
+        self.sent.append(message)
+
+    # -- helpers ----------------------------------------------------------
+
+    @property
+    def last(self) -> EmailMessage:
+        assert self.sent, "no mail was sent"
+        return self.sent[-1]
+
+    def body(self, index: int = -1) -> str:
+        part = self.sent[index].get_body(preferencelist=("plain",))
+        return part.get_content() if part else ""
+
+    def link(self, index: int = -1) -> str:
+        match = LINK_RE.search(self.body(index))
+        assert match, f"no verification link in:\n{self.body(index)}"
+        return match.group(0)
+
+    def token(self, index: int = -1) -> str:
+        return self.link(index).split("token=", 1)[1]
+
+
+class FailingMailer:
+    """Every send raises, for the transport-failure paths."""
+
+    def send(self, message: EmailMessage) -> None:
+        raise MailError("simulated SMTP failure")

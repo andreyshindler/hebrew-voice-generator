@@ -21,6 +21,16 @@ function nextTarget() {
   return safe || url("/");
 }
 
+/** Replace the form with a "we sent you a link" panel. */
+function showVerificationNotice(form, email) {
+  const notice = $("#verify-notice");
+  if (!notice) return;
+  const target = $("#verify-email");
+  if (target) target.textContent = email;
+  form.hidden = true;
+  notice.hidden = false;
+}
+
 function wire(form, submit) {
   if (!form) return;
   form.addEventListener("submit", async (event) => {
@@ -34,12 +44,42 @@ function wire(form, submit) {
 
     const data = Object.fromEntries(new FormData(form).entries());
     try {
-      await submit(data);
+      const result = await submit(data);
+      // Signup with verification on returns no session - stay put and tell
+      // the user to go and read their mail.
+      if (result && result.status === "verification_sent") {
+        showVerificationNotice(form, result.email);
+        return;
+      }
       window.location.href = nextTarget();
     } catch (error) {
-      showError(error instanceof ApiError ? error.message : "אירעה שגיאה, נסו שוב");
+      if (error instanceof ApiError && error.code === "email_unverified") {
+        showResendPrompt(data.email);
+      } else {
+        showError(error instanceof ApiError ? error.message : "אירעה שגיאה, נסו שוב");
+      }
       button.disabled = false;
       button.textContent = original;
+    }
+  });
+}
+
+/** Login refused because the address isn't confirmed: offer to resend. */
+function showResendPrompt(email) {
+  showError("יש לאמת את כתובת האימייל לפני הכניסה.");
+  const prompt = $("#resend-prompt");
+  if (!prompt) return;
+  prompt.hidden = false;
+  const button = $("#resend-btn");
+  if (!button || button.dataset.wired) return;
+  button.dataset.wired = "1";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await api.resendVerification(String(email || "").trim());
+      button.textContent = "נשלח קישור חדש";
+    } catch (err) {
+      button.disabled = false;
     }
   });
 }

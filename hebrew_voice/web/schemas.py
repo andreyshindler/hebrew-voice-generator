@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 __all__ = [
     "SignupRequest",
     "LoginRequest",
+    "ResendRequest",
     "CleanupOptions",
     "PreviewRequest",
     "SynthesizeRequest",
@@ -39,6 +40,10 @@ class SignupRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(max_length=254)
     password: str = Field(max_length=1024)
+
+
+class ResendRequest(BaseModel):
+    email: str = Field(max_length=254)
 
 
 class PreviewRequest(CleanupOptions):

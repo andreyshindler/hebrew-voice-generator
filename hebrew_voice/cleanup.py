@@ -19,11 +19,12 @@ class SweepResult:
     generations_deleted: int = 0
     files_deleted: int = 0
     sessions_purged: int = 0
+    tokens_purged: int = 0
 
     def __str__(self) -> str:
         return (
             f"{self.generations_deleted} generations, {self.files_deleted} files, "
-            f"{self.sessions_purged} expired sessions"
+            f"{self.sessions_purged} expired sessions, {self.tokens_purged} email tokens"
         )
 
 
@@ -53,8 +54,9 @@ def sweep(settings: Settings, *, dry_run: bool = False) -> SweepResult:
 
     if not dry_run:
         result.sessions_purged = repo.purge_expired_sessions(settings.db_path)
+        result.tokens_purged = repo.purge_expired_tokens(settings.db_path)
 
-    if result.generations_deleted or result.sessions_purged:
+    if result.generations_deleted or result.sessions_purged or result.tokens_purged:
         log.info("retention sweep removed %s", result)
     _warn_on_low_disk(settings.data_dir)
     return result

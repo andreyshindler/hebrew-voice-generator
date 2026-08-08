@@ -22,6 +22,7 @@ __all__ = [
     "require_user",
     "require_csrf",
     "require_admin",
+    "require_verified",
 ]
 
 SESSION_COOKIE = "hv_session"
@@ -88,6 +89,24 @@ async def require_user(request: Request) -> User:
 async def require_admin(user: User = Depends(require_user)) -> User:
     if not user.is_admin:
         raise Forbidden("Admins only", code="admin_required")
+    return user
+
+
+async def require_verified(request: Request, user: User = Depends(require_user)) -> User:
+    """Refuse an account that hasn't confirmed its address.
+
+    Applied at router level so a new endpoint is gated by default. Under the
+    strict policy an unverified user never gets a session, so this is
+    belt-and-braces - it earns its place because accounts can also be made by
+    the CLI and by future flows.
+    """
+    settings: Settings = request.app.state.settings
+    if settings.require_email_verification and not user.is_verified:
+        raise Forbidden(
+            "Confirm your email address first",
+            code="email_unverified",
+            detail={"email": user.email},
+        )
     return user
 
 

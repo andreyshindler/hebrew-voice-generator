@@ -33,6 +33,20 @@ HV_BASE_URL=https://srv1515969.hstgr.cloud/voice-gen
 HV_INVITE_CODES=<a code you share with whoever should get in>
 ```
 
+Registration also needs a mail relay, because a new account can't do anything until
+it opens the confirmation link:
+
+```ini
+HV_SMTP_HOST=smtp.gmail.com
+HV_SMTP_USER=you@gmail.com
+HV_SMTP_PASSWORD=<16-character app password, no spaces>
+```
+
+That password is **not** your Google password. Turn on 2-Step Verification, generate one
+at <https://myaccount.google.com/apppasswords>, and paste it without the spaces Google
+shows. The app refuses to start in production if verification is on and this is missing —
+otherwise it would create accounts nobody could ever activate.
+
 Leave `HV_DATA_DIR` alone — compose overrides it to `/data` inside the container.
 
 **Check the host port is free before starting.** A busy VPS often already has something
@@ -79,8 +93,20 @@ nginx picks it first regardless of where you paste it. occy keeps serving everyt
 sudo docker compose exec hebrew-voice hebrew-voice user add you@example.com
 ```
 
-Or just register at `https://srv1515969.hstgr.cloud/voice-gen/signup` with the invite
-code. Either way the first account created becomes the admin.
+Accounts made this way are **already confirmed** — an admin at a shell has vouched for
+the address — so bootstrapping a new box never depends on working SMTP. Do this first;
+it means a mail misconfiguration can't lock you out.
+
+Registering at `https://srv1515969.hstgr.cloud/voice-gen/signup` with the invite code
+goes through the email flow instead: the page says "check your inbox", and the account
+stays inert until the link is opened. Either way the first account created is the admin.
+
+To confirm an address by hand — say the mail bounced:
+
+```bash
+sudo docker compose exec hebrew-voice hebrew-voice user verify someone@example.com
+sudo docker compose exec hebrew-voice hebrew-voice user list   # shows "unverified"
+```
 
 ## 5. Verify
 
@@ -123,6 +149,9 @@ sudo docker cp hebrew-voice:/data/backup.db ./hv-$(date +%F).db
 | Page loads with no styling | You hit `/voice-gen` without the trailing slash and the `location = /voice-gen` redirect isn't installed. |
 | Login says "success" but you stay logged out | `HV_BASE_URL` is `http://` while `HV_SECURE_COOKIES` is on, so the browser drops the cookie. The app refuses to boot in this state — check you actually restarted it. |
 | Every action returns 403 | `HV_BASE_URL`'s host doesn't match the hostname you're browsing. The origin check compares hosts. |
+| Signup returns 502 `email_send_failed` | The relay rejected the message. `docker compose logs` has the SMTP error — usually a wrong app password, or 2-Step Verification not enabled. The account exists; fix the setting and use the resend link. |
+| The mail never arrives | Check spam first. Then confirm the container can reach smtp.gmail.com:587 — some hosts firewall outbound SMTP as well as port 25. |
+| Verification link 404s or points at the wrong host | `HV_BASE_URL` is what builds the link. It must be the full public URL including `/voice-gen`. |
 | 504 on long text | nginx `proxy_read_timeout` is below `HV_SYNTH_TIMEOUT`. The example sets 300s vs 180s. |
 
 ---

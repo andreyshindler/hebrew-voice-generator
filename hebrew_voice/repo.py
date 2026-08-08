@@ -29,6 +29,11 @@ __all__ = [
     "delete_session",
     "delete_user_sessions",
     "purge_expired_sessions",
+    "create_email_token",
+    "consume_email_token",
+    "mark_email_verified",
+    "purge_expired_tokens",
+    "VERIFY_EMAIL",
     "insert_generation",
     "get_generation",
     "list_generations",
@@ -58,8 +63,13 @@ def create_user(
     is_admin: bool = False,
     invite_code: Optional[str] = None,
     daily_char_quota: Optional[int] = None,
+    verified: bool = False,
 ) -> User:
-    """Insert a user. The first account created is automatically an admin."""
+    """Insert a user. The first account created is automatically an admin.
+
+    ``verified`` skips email confirmation - used by the CLI, where an admin at
+    a shell has already vouched for the address.
+    """
     now = int(time.time())
     with connect(db) as conn:
         try:
@@ -70,10 +80,13 @@ def create_user(
                     """
                     INSERT INTO users
                         (email, password_hash, created_at, is_active, is_admin,
-                         invite_code, daily_char_quota)
-                    VALUES (?, ?, ?, 1, ?, ?, ?)
+                         invite_code, daily_char_quota, email_verified_at)
+                    VALUES (?, ?, ?, 1, ?, ?, ?, ?)
                     """,
-                    (email.strip(), password_hash, now, admin, invite_code, daily_char_quota),
+                    (
+                        email.strip(), password_hash, now, admin, invite_code,
+                        daily_char_quota, now if verified else 0,
+                    ),
                 )
                 user_id = cur.lastrowid
         except sqlite3.IntegrityError as exc:
@@ -227,6 +240,85 @@ def delete_user_sessions(db: Path, user_id: int) -> None:
 def purge_expired_sessions(db: Path) -> int:
     with connect(db) as conn:
         cur = conn.execute("DELETE FROM sessions WHERE expires_at <= ?", (int(time.time()),))
+        return cur.rowcount or 0
+
+
+# --------------------------------------------------------------------------
+# Email verification
+# --------------------------------------------------------------------------
+
+VERIFY_EMAIL = "verify_email"
+
+
+def create_email_token(
+    db: Path, *, user_id: int, purpose: str, ttl_seconds: int
+) -> str:
+    """Mint a token for an emailed link and return the *raw* value.
+
+    Only the SHA-256 is stored, so a database leak yields no usable links.
+    Outstanding tokens of the same purpose are dropped first, so a resend
+    retires the previous email.
+    """
+    from .security import hash_session_token, new_email_token
+
+    raw = new_email_token()
+    now = int(time.time())
+    with connect(db) as conn:
+        with transaction(conn):
+            conn.execute(
+                "DELETE FROM email_tokens WHERE user_id = ? AND purpose = ?",
+                (user_id, purpose),
+            )
+            conn.execute(
+                """
+                INSERT INTO email_tokens
+                    (id, user_id, purpose, created_at, expires_at, used_at)
+                VALUES (?, ?, ?, ?, ?, 0)
+                """,
+                (hash_session_token(raw), user_id, purpose, now, now + ttl_seconds),
+            )
+    return raw
+
+
+def consume_email_token(db: Path, token_hash: str, purpose: str) -> Optional[int]:
+    """Spend a token, returning its user id, or ``None`` if it isn't usable.
+
+    The lookup and the "mark used" happen in one ``BEGIN IMMEDIATE`` so two
+    concurrent clicks can't both succeed.
+    """
+    now = int(time.time())
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                """
+                SELECT user_id FROM email_tokens
+                 WHERE id = ? AND purpose = ? AND used_at = 0 AND expires_at > ?
+                """,
+                (token_hash, purpose, now),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "UPDATE email_tokens SET used_at = ? WHERE id = ?", (now, token_hash)
+            )
+            return row["user_id"]
+
+
+def mark_email_verified(db: Path, user_id: int) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE users SET email_verified_at = ? WHERE id = ?",
+            (int(time.time()), user_id),
+        )
+
+
+def purge_expired_tokens(db: Path) -> int:
+    """Drop spent and expired links so the table doesn't grow forever."""
+    with connect(db) as conn:
+        cur = conn.execute(
+            "DELETE FROM email_tokens WHERE expires_at <= ? OR used_at > 0",
+            (int(time.time()),),
+        )
         return cur.rowcount or 0
 
 

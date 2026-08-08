@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from hebrew_voice import synth
+from hebrew_voice import repo, synth
+from hebrew_voice.mailer import SmtpMailer
 from hebrew_voice.config import Settings
 from hebrew_voice.web.app import create_app
 
@@ -33,6 +34,11 @@ def no_network(monkeypatch):
         raise AssertionError("a test tried to make a live TTS call")
 
     monkeypatch.setattr(synth, "build_communicate", explode)
+
+    def explode_smtp(*args, **kwargs):
+        raise AssertionError("a test tried to open a real SMTP connection")
+
+    monkeypatch.setattr(SmtpMailer, "send", explode_smtp)
 
 
 @pytest.fixture
@@ -70,7 +76,16 @@ def settings(tmp_path) -> Settings:
 
 @pytest.fixture
 def app(settings):
-    return create_app(settings)
+    application = create_app(settings)
+    # Every app in the suite records mail instead of sending it.
+    application.state.mailer = fakes.RecordingMailer()
+    return application
+
+
+@pytest.fixture
+def mailer(app):
+    """The RecordingMailer the app under test is using."""
+    return app.state.mailer
 
 
 @pytest.fixture
@@ -80,13 +95,40 @@ def client(app):
 
 
 @pytest.fixture
-def auth_client(client):
-    """A client with a registered, logged-in account."""
+def auth_client(client, settings):
+    """A client with a registered, verified, logged-in account.
+
+    Signup alone no longer logs you in - the account has to confirm its
+    address first - so this walks the real flow: register, verify, log in.
+    """
     response = client.post(
         "/api/auth/signup",
         json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
     )
-    assert response.status_code == 201, response.text
+    assert response.status_code in (201, 202), response.text
+    user = repo.get_user_by_email(settings.db_path, EMAIL)
+    repo.mark_email_verified(settings.db_path, user.id)
+    login = client.post("/api/auth/login", json={"email": EMAIL, "password": PASSWORD})
+    assert login.status_code == 200, login.text
+    return client
+
+
+def register_verified(client, settings, email: str = EMAIL, password: str = PASSWORD):
+    """Walk the whole signup flow: register, confirm the address, log in.
+
+    Signup on its own no longer creates a session, so tests that just need "a
+    logged-in account" use this rather than asserting on the intermediate
+    states, which belong to test_email_verification.py.
+    """
+    response = client.post(
+        "/api/auth/signup",
+        json={"email": email, "password": password, "invite_code": INVITE},
+    )
+    assert response.status_code in (201, 202), response.text
+    user = repo.get_user_by_email(settings.db_path, email)
+    repo.mark_email_verified(settings.db_path, user.id)
+    login = client.post("/api/auth/login", json={"email": email, "password": password})
+    assert login.status_code == 200, login.text
     return client
 
 

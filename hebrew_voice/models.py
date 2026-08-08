@@ -21,6 +21,7 @@ class User:
     daily_char_quota: Optional[int]
     failed_logins: int
     locked_until: int
+    email_verified_at: int = 0
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "User":
@@ -35,7 +36,12 @@ class User:
             daily_char_quota=row["daily_char_quota"],
             failed_logins=row["failed_logins"],
             locked_until=row["locked_until"],
+            email_verified_at=row["email_verified_at"],
         )
+
+    @property
+    def is_verified(self) -> bool:
+        return self.email_verified_at > 0
 
     def public(self) -> Dict[str, Any]:
         """The shape the API hands to the browser - never the hash."""
@@ -44,6 +50,7 @@ class User:
             "email": self.email,
             "is_admin": self.is_admin,
             "created_at": self.created_at,
+            "email_verified": self.is_verified,
         }
 
 

@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from hebrew_voice.config import Settings, normalize_root_path
 from hebrew_voice.web.app import create_app
 
-from .conftest import EMAIL, INVITE, PASSWORD, csrf
+from .conftest import EMAIL, INVITE, PASSWORD, csrf, register_verified
 
 PREFIX = "/voice-gen"
 HOST = "https://srv1515969.hstgr.cloud"
@@ -31,12 +31,21 @@ def sub_client(sub_settings):
 
 
 @pytest.fixture
-def sub_auth(sub_client):
+def sub_auth(sub_client, sub_settings):
+    """Registered, confirmed, and signed in - all under the prefix."""
+    from hebrew_voice import repo
+
     response = sub_client.post(
         f"{PREFIX}/api/auth/signup",
         json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
     )
-    assert response.status_code == 201, response.text
+    assert response.status_code == 202, response.text
+    user = repo.get_user_by_email(sub_settings.db_path, EMAIL)
+    repo.mark_email_verified(sub_settings.db_path, user.id)
+    login = sub_client.post(
+        f"{PREFIX}/api/auth/login", json={"email": EMAIL, "password": PASSWORD}
+    )
+    assert login.status_code == 200, login.text
     return sub_client
 
 
@@ -106,7 +115,7 @@ class TestOriginCheck:
             json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
             headers={"Origin": HOST},
         )
-        assert response.status_code == 201, response.text
+        assert response.status_code == 202, response.text
 
     def test_another_origin_is_still_blocked(self, sub_auth):
         response = sub_auth.post(
@@ -172,10 +181,17 @@ class TestEmittedUrls:
 
 
 class TestCookies:
-    def test_cookies_are_scoped_to_the_prefix(self, sub_client):
-        response = sub_client.post(
+    def test_cookies_are_scoped_to_the_prefix(self, sub_client, sub_settings):
+        from hebrew_voice import repo
+
+        sub_client.post(
             f"{PREFIX}/api/auth/signup",
             json={"email": EMAIL, "password": PASSWORD, "invite_code": INVITE},
+        )
+        user = repo.get_user_by_email(sub_settings.db_path, EMAIL)
+        repo.mark_email_verified(sub_settings.db_path, user.id)
+        response = sub_client.post(
+            f"{PREFIX}/api/auth/login", json={"email": EMAIL, "password": PASSWORD}
         )
         # Scoped so the session isn't sent to the app sharing the hostname.
         cookies = response.headers.get_list("set-cookie")

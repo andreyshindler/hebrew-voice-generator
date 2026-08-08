@@ -83,6 +83,28 @@ MIGRATIONS: List[Tuple[int, str]] = [
         );
         """,
     ),
+    (
+        2,
+        # Email verification. Accounts that predate this migration are
+        # grandfathered as verified - nobody gets locked out by a mailer that
+        # hasn't been proven on this box yet.
+        """
+        ALTER TABLE users ADD COLUMN email_verified_at INTEGER NOT NULL DEFAULT 0;
+
+        UPDATE users SET email_verified_at = CAST(strftime('%s','now') AS INTEGER);
+
+        CREATE TABLE email_tokens (
+            id         TEXT    PRIMARY KEY,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            purpose    TEXT    NOT NULL,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            used_at    INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_email_tokens_user    ON email_tokens(user_id, purpose);
+        CREATE INDEX idx_email_tokens_expires ON email_tokens(expires_at);
+        """,
+    ),
 ]
 
 

@@ -7,7 +7,9 @@ import json
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from .. import __version__
+from starlette.concurrency import run_in_threadpool
+
+from .. import __version__, repo, security
 from ..config import Settings
 from ..errors import NotFound
 from ..voices import catalog
@@ -65,6 +67,39 @@ async def signup_page(request: Request, settings: Settings = Depends(get_setting
         return RedirectResponse(settings.url("/"), status_code=303)
     return _templates(request).TemplateResponse(
         request, "signup.html", {"version": __version__}
+    )
+
+
+@router.get("/verify", response_class=HTMLResponse)
+async def verify_page(
+    request: Request, token: str = "", settings: Settings = Depends(get_settings)
+):
+    """Where the emailed link lands.
+
+    Deliberately reachable while signed out - the link is often opened in a
+    different browser from the one that signed up.
+
+    A GET that changes state is unavoidable for an email link. The token is
+    single-use, high-entropy, and short-lived, which bounds the cost; if link
+    scanners start consuming tokens, this becomes a confirm button that POSTs.
+    """
+    state = "invalid"
+    if token:
+        user_id = await run_in_threadpool(
+            repo.consume_email_token,
+            settings.db_path,
+            security.hash_session_token(token),
+            repo.VERIFY_EMAIL,
+        )
+        if user_id is not None:
+            await run_in_threadpool(repo.mark_email_verified, settings.db_path, user_id)
+            state = "verified"
+
+    return _templates(request).TemplateResponse(
+        request,
+        "verify.html",
+        {"state": state, "version": __version__},
+        status_code=200 if state == "verified" else 400,
     )
 
 

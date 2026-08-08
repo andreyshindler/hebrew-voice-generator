@@ -31,7 +31,9 @@ it on a VPS and hand the URL to other people.
 - **Script upload** — drop a `.txt` file onto the text box; it's read in the browser and
   loaded into the editor, still editable before you generate.
 - **History** — replay, re-download, or reload the settings of anything you made before.
-- **Accounts** — email and password in SQLite, signup gated behind an invite code.
+- **Accounts** — email and password in SQLite, signup gated behind an invite code
+  *and* email confirmation: registering sends a Hebrew verification link, and the
+  account does nothing until it's opened.
 - **Guard rails** — per-request character cap, daily per-user quota, rate limiting, a
   server-wide concurrency cap, and automatic retention cleanup.
 - **A CLI** for scripting and for smoke-testing a fresh install.
@@ -107,6 +109,8 @@ The settings you'll actually think about:
 | `HV_BASE_URL` | — | Full public URL **including any subpath**. Required in production. Sets the allowed origin, and its path becomes the app's URL prefix. |
 | `HV_ROOT_PATH` | derived | The prefix the app is served under. Leave unset — it comes from `HV_BASE_URL`. |
 | `HV_INVITE_CODES` | empty | Comma-separated codes accepted at signup. |
+| `HV_REQUIRE_EMAIL_VERIFICATION` | `true` | New accounts must confirm their address before they can log in. |
+| `HV_SMTP_HOST` / `_USER` / `_PASSWORD` | empty | Mail relay. Required in production while verification is on; empty logs messages instead of sending. |
 | `HV_SIGNUP_ENABLED` | `true` | Set false to close registration entirely. |
 | `HV_MAX_CHARS` | `10000` | Longest single request. |
 | `HV_DAILY_CHAR_QUOTA` | `50000` | Characters per user per day. |
@@ -116,7 +120,14 @@ The settings you'll actually think about:
 | `HV_HISTORY_KEEP` / `HV_HISTORY_MAX_AGE_DAYS` | `50` / `30` | Retention policy. |
 
 Production boots refuse to start with a missing secret key, insecure cookies, no
-`HV_BASE_URL`, or open signup with no invite codes.
+`HV_BASE_URL`, open signup with no invite codes, or email verification switched on
+with no SMTP relay configured — that last one would create accounts nobody could
+ever activate.
+
+**Sending mail** uses a Gmail app password (2-Step Verification must be on; generate
+one at <https://myaccount.google.com/apppasswords> and paste the 16 characters without
+spaces). Locally, leave `HV_SMTP_HOST` empty: messages are written to the log instead
+of sent, verification link and all, so the whole flow works with no mail server.
 
 > **Run exactly one worker.** The concurrency cap, the per-user gate, and the rate
 > limiter are in-process. `--workers 4` would silently multiply every limit by four. The

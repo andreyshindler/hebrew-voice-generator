@@ -22,6 +22,7 @@ __all__ = [
     "QuotaExceeded",
     "ServerBusy",
     "UpstreamError",
+    "MailFailed",
     "SynthesisTimeout",
 ]
 
@@ -109,6 +110,11 @@ class ServerBusy(AppError):
 class UpstreamError(AppError):
     status = 502
     code = "tts_upstream_failed"
+
+
+class MailFailed(AppError):
+    status = 502
+    code = "email_send_failed"
 
 
 class SynthesisTimeout(AppError):
