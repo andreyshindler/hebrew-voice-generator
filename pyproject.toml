@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hebrew-voice"
+version = "0.1.0"
+description = "Hebrew text-to-speech web app and CLI, powered by edge-tts"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["hebrew", "tts", "text-to-speech", "edge-tts", "voiceover"]
+classifiers = [
+    "Programming Language :: Python :: 3.11",
+    "Natural Language :: Hebrew",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+# Four runtime dependencies. Passwords use stdlib scrypt and storage uses
+# stdlib sqlite3, so the Docker image needs no compiler.
+dependencies = [
+    "edge-tts>=7.2,<8",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
+[project.scripts]
+hebrew-voice = "hebrew_voice.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hebrew_voice*"]
+
+[tool.setuptools.package-data]
+hebrew_voice = ["web/templates/*.html", "web/static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -m 'not network'"
+markers = [
+    "network: needs a live connection to the Edge TTS service",
+]
+filterwarnings = ["ignore::DeprecationWarning"]

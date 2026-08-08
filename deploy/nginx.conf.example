@@ -1,0 +1,62 @@
+# nginx site for the Hebrew Voice Generator.
+# Install as /etc/nginx/sites-available/hebrew-voice and symlink into
+# sites-enabled. Run certbot afterwards to fill in the TLS block.
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name voice.example.com;
+
+    # certbot adds its own redirect; this covers the pre-TLS window.
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name voice.example.com;
+
+    # certbot --nginx fills these in.
+    ssl_certificate     /etc/letsencrypt/live/voice.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/voice.example.com/privkey.pem;
+
+    # The API is JSON-only and text is capped by HV_MAX_CHARS; 1 MB is plenty.
+    client_max_body_size 1m;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json text/vtt text/plain;
+    # Never gzip audio - it doesn't compress and it breaks range requests.
+    gzip_proxied any;
+
+    # Served straight off disk, bypassing Python.
+    location /static/ {
+        alias /opt/hebrew-voice/hebrew_voice/web/static/;
+        expires 7d;
+        access_log off;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Must exceed HV_SYNTH_TIMEOUT (default 180s), or nginx will hand the
+        # user a 504 while the app quietly finishes the job and stores it.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+
+        # Audio is served with range support; don't let nginx buffer it whole.
+        proxy_buffering off;
+    }
+
+    # If serving audio through Python ever becomes a bottleneck, have the app
+    # emit X-Accel-Redirect and uncomment this:
+    # location /protected-audio/ {
+    #     internal;
+    #     alias /var/lib/hebrew-voice/audio/;
+    # }
+}

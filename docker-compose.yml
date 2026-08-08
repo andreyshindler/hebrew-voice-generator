@@ -1,0 +1,16 @@
+services:
+  hebrew-voice:
+    build: .
+    restart: unless-stopped
+    # Bind to localhost only and put nginx (with TLS) in front.
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env
+    environment:
+      HV_DATA_DIR: /data
+    volumes:
+      - hebrew-voice-data:/data
+
+volumes:
+  hebrew-voice-data:
