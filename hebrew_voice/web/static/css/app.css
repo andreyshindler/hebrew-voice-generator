@@ -735,6 +735,7 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 
 .history-item {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
@@ -746,8 +747,27 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   transition: border-color .15s ease;
 }
 .history-item:hover { border-color: var(--border-strong); }
-.history-item > div:first-child { min-inline-size: 0; }
-.history-item.is-playing { border-color: var(--accent); background: var(--accent-soft); }
+.history-item.is-current { border-color: var(--accent); background: var(--accent-soft); }
+
+/* The title block is a button, and its ::after covers the whole card, so a
+   click anywhere loads the recording. The action buttons sit above that
+   overlay, which is why they still get their own clicks. */
+.history-open {
+  min-inline-size: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.history-open::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
 
 .history-title {
   font-size: 14px;
@@ -764,7 +784,7 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   color: var(--text-muted);
   font-size: 11px;
 }
-.history-actions { display: flex; gap: 2px; }
+.history-actions { display: flex; gap: 2px; position: relative; z-index: 1; }
 .history-actions .icon-btn { inline-size: 30px; block-size: 30px; border-color: transparent; background: transparent; }
 .history-actions .icon-btn:hover { background: var(--surface-3); }
 .history-actions .icon-btn svg { inline-size: 15px; block-size: 15px; }
