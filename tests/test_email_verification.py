@@ -275,7 +275,8 @@ class TestGrandfathering:
             )
             conn.execute("INSERT INTO schema_migrations VALUES (1, 1)")
 
-        assert db.migrate(path) == 2
+        # Migrating brings the file all the way up, whatever the latest is.
+        assert db.migrate(path) == db.MIGRATIONS[-1][0]
         assert repo.get_user_by_email(path, "old@example.com").is_verified is True
 
 

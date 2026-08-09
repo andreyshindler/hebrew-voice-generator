@@ -27,7 +27,7 @@ from ..errors import (
 )
 from ..models import Generation, User
 from ..quota import RateLimiter, day_reset_epoch, quota_day
-from ..synth import SynthesisOptions, synthesize, to_srt, to_vtt
+from ..synth import SynthesisOptions, dump_cues, synthesize, to_srt, to_vtt
 from ..voices import DEFAULT_VOICE, is_known_voice, resolve_voice
 from .schemas import SynthesizeRequest
 
@@ -234,7 +234,13 @@ class SynthRunner:
         started = time.monotonic()
         try:
             async with asyncio.timeout(settings.synth_timeout):
-                result = await synthesize(prepared, None, opts, already_prepared=True)
+                result = await synthesize(
+                    prepared,
+                    None,
+                    opts,
+                    already_prepared=True,
+                    words_per_cue=request.words_per_cue,
+                )
         except (asyncio.TimeoutError, TimeoutError) as exc:
             raise SynthesisTimeout("Synthesis took too long") from exc
         except Exception as exc:
@@ -261,6 +267,10 @@ class SynthRunner:
             audio=result.audio,
             srt=to_srt(result.cues) if request.subtitles else None,
             vtt=to_vtt(result.cues) if request.subtitles else None,
+            # The raw word timings, kept beside the rendered files so the
+            # subtitle endpoints can re-render at another density later
+            # without re-synthesising or spending quota again.
+            cues=dump_cues(result.word_cues) if request.subtitles else None,
         )
 
         generation = Generation(
@@ -282,6 +292,8 @@ class SynthRunner:
             audio_rel=written.audio_rel,
             srt_rel=written.srt_rel,
             vtt_rel=written.vtt_rel,
+            cues_rel=written.cues_rel,
+            words_per_cue=request.words_per_cue,
             audio_bytes=len(result.audio),
             duration_ms=int(result.duration * 1000),
             cue_count=len(result.cues),

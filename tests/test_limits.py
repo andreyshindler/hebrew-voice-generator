@@ -189,7 +189,8 @@ class TestRetention:
             stamp = int(time.time()) - age_days * 86400 - index
             paths = storage.relative_paths(user_id, gen_id, when=stamp)
             written = storage.write_artifacts(
-                settings.data_dir, paths, audio=b"\xff\xfb", srt="1\n", vtt="WEBVTT\n"
+                settings.data_dir, paths, audio=b"\xff\xfb", srt="1\n", vtt="WEBVTT\n",
+                cues='{"version":1,"cues":[[0,1,"שלום"]]}',
             )
             generation = Generation(
                 id=gen_id, user_id=user_id, created_at=stamp, title=f"item {index}",
@@ -197,7 +198,7 @@ class TestRetention:
                 rate=0, pitch=0, volume=0, keep_niqqud=False, expand_symbols=True,
                 expand_abbreviations=True, expand_acronyms=True,
                 audio_rel=written.audio_rel, srt_rel=written.srt_rel, vtt_rel=written.vtt_rel,
-                audio_bytes=2, duration_ms=1000, cue_count=1,
+                cues_rel=written.cues_rel, audio_bytes=2, duration_ms=1000, cue_count=1,
             )
             repo.insert_generation(settings.db_path, generation)
             created.append(generation)
@@ -218,7 +219,11 @@ class TestRetention:
         result = cleanup.sweep(tight)
         assert result.generations_deleted == 3
         assert repo.count_generations(tight.db_path, prepared.id) == 5
-        assert len(list((tight.data_dir / "audio").rglob("*.mp3"))) == 5
+        # Every artifact goes, not just the audio - a leaked cue file would
+        # sit on the disk forever with no row pointing at it.
+        audio = tight.data_dir / "audio"
+        for pattern in ("*.mp3", "*.srt", "*.vtt", "*.cues.json"):
+            assert len(list(audio.rglob(pattern))) == 5, pattern
 
     def test_deletes_anything_past_the_age_limit(self, settings, prepared):
         tight = replace(settings, history_keep=100, history_max_age_days=30)

@@ -126,6 +126,140 @@ class TestArtifacts:
         assert vtt.headers["content-type"].startswith("text/vtt")
 
 
+def cue_count(body: str) -> int:
+    """Cues in an SRT body, counted by its blank-line-separated blocks."""
+    return len([block for block in body.strip().split("\n\n") if block.strip()])
+
+
+def cue_texts(body: str) -> list:
+    """Just the spoken lines of an SRT body - no indices, no timestamps."""
+    return [
+        block.strip().split("\n")[-1]
+        for block in body.strip().split("\n\n")
+        if "-->" in block
+    ]
+
+
+class TestCaptionDensity:
+    """Re-rendering subtitles from the stored word timings."""
+
+    @pytest.fixture
+    def generation(self, auth_client, fake_tts):
+        # Six words, so a default 7-word cue holds all of them.
+        return generate(auth_client, text="אחת שתיים שלוש ארבע חמש שש").json()
+
+    def test_a_new_generation_advertises_that_it_can_be_regrouped(self, generation):
+        assert generation["can_regroup"] is True
+
+    def test_no_parameters_serves_the_stored_file_untouched(self, auth_client, generation):
+        response = auth_client.get(generation["urls"]["srt"])
+        assert cue_count(response.text) == 1
+        # Still off disk, so still immutable.
+        assert "immutable" in response.headers["cache-control"]
+
+    def test_one_word_per_cue_gives_a_cue_per_word(self, auth_client, generation):
+        response = auth_client.get(generation["urls"]["srt"] + "?words=1")
+        assert response.status_code == 200
+        assert cue_count(response.text) == 6
+        assert response.headers["content-type"].startswith("text/plain")
+
+    def test_a_regrouped_body_is_not_cached_as_immutable(self, auth_client, generation):
+        response = auth_client.get(generation["urls"]["srt"] + "?words=1")
+        assert "immutable" not in response.headers["cache-control"]
+        # ...but it is still a download with a sensible filename.
+        assert response.headers["content-disposition"].startswith("attachment")
+
+    def test_the_vtt_track_can_be_regrouped_too(self, auth_client, generation):
+        response = auth_client.get(generation["urls"]["vtt"] + "?words=2")
+        assert response.text.startswith("WEBVTT")
+        assert response.headers["content-type"].startswith("text/vtt")
+        assert "attachment" not in response.headers.get("content-disposition", "")
+        assert cue_count(response.text) == 4  # the header block, then three cues
+
+    def test_punctuation_can_be_stripped_without_changing_the_density(
+        self, auth_client, fake_tts
+    ):
+        created = generate(auth_client, text="שלום, עולם.").json()
+        plain = cue_texts(auth_client.get(created["urls"]["srt"] + "?words=1").text)
+        stripped = cue_texts(
+            auth_client.get(created["urls"]["srt"] + "?words=1&strip_punctuation=1").text
+        )
+        assert plain == ["שלום,", "עולם."]
+        assert stripped == ["שלום", "עולם"]
+
+    def test_a_minimum_duration_stretches_short_cues(self, auth_client, generation):
+        # The fake's cues butt up against each other, so only the last one has
+        # room to grow - which is exactly the guarantee worth checking here.
+        plain = auth_client.get(generation["urls"]["srt"] + "?words=1").text
+        stretched = auth_client.get(
+            generation["urls"]["srt"] + "?words=1&min_duration=1"
+        ).text
+        assert plain.rstrip().endswith("00:00:01,750 --> 00:00:02,100\nשש")
+        assert stretched.rstrip().endswith("00:00:01,750 --> 00:00:02,750\nשש")
+
+    @pytest.mark.parametrize("bad", ["0", "21", "-3", "many"])
+    def test_rejects_a_density_outside_the_range(self, auth_client, generation, bad):
+        assert auth_client.get(
+            generation["urls"]["srt"] + f"?words={bad}"
+        ).status_code == 422
+
+    def test_a_recording_from_before_the_feature_cannot_be_regrouped(
+        self, auth_client, settings, generation
+    ):
+        # Simulate a row written before migration 3 added the cue timings.
+        from hebrew_voice.db import connect
+
+        with connect(settings.db_path) as conn:
+            conn.execute(
+                "UPDATE generations SET cues_rel = NULL WHERE id = ?", (generation["id"],)
+            )
+        assert auth_client.get(f"/api/generations/{generation['id']}").json()[
+            "can_regroup"
+        ] is False
+        response = auth_client.get(generation["urls"]["srt"] + "?words=1")
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "cues_unavailable"
+        # The stored file is still served, so nothing regresses for old rows.
+        assert auth_client.get(generation["urls"]["srt"]).status_code == 200
+
+    def test_a_missing_cue_file_is_reported_not_crashed(
+        self, auth_client, settings, generation
+    ):
+        for stray in (settings.data_dir / "audio").rglob("*.cues.json"):
+            stray.unlink()
+        response = auth_client.get(generation["urls"]["srt"] + "?words=1")
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "cues_unavailable"
+
+    def test_the_initial_density_is_baked_into_the_stored_files(
+        self, auth_client, fake_tts
+    ):
+        created = generate(auth_client, text="אחת שתיים שלוש ארבע", words_per_cue=1).json()
+        assert cue_count(auth_client.get(created["urls"]["srt"]).text) == 4
+
+    def test_the_stored_density_is_reported_back(self, auth_client, fake_tts):
+        created = generate(auth_client, words_per_cue=2).json()
+        assert created["words_per_cue"] == 2
+        # ...and survives into the history list, so replaying a recording
+        # shows the density it was actually rendered at.
+        listed = auth_client.get("/api/generations").json()["items"][0]
+        assert listed["words_per_cue"] == 2
+
+    def test_the_density_defaults_to_readable_lines(self, generation):
+        assert generation["words_per_cue"] == 7
+
+    @pytest.mark.parametrize("bad", [0, 21, -1])
+    def test_rejects_an_initial_density_outside_the_range(self, auth_client, fake_tts, bad):
+        assert generate(auth_client, words_per_cue=bad).status_code == 422
+
+    def test_a_generation_without_subtitles_keeps_no_cue_file(
+        self, auth_client, settings, fake_tts
+    ):
+        created = generate(auth_client, subtitles=False).json()
+        assert created["can_regroup"] is False
+        assert not list((settings.data_dir / "audio").rglob("*.cues.json"))
+
+
 class TestPreview:
     def test_shows_the_prepared_text_without_calling_the_engine(self, auth_client):
         # Note: no fake installed - a network call would fail the test.

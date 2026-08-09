@@ -10,8 +10,21 @@ export class Player {
     this.downloads = $("#download-row");
     this.preparedPanel = $("#tab-prepared");
     this.cuesPanel = $("#tab-cues");
+    this.captionControls = $("#caption-controls");
     this.current = null;
+    /* Rows and timings of the cue list, kept so the active one can be
+       highlighted in time with the audio. */
+    this.cueRows = [];
+    this.cues = [];
+    this.activeCue = -1;
+    /* A view over the current recording, not a saved preference: it starts at
+       whatever density the stored files were rendered at, which is what the
+       composer's control chose. Persisting it here would mean the result card
+       disagreeing with the files a fresh generation just wrote. */
+    this.captions = { words: 7, strip: false, minDuration: 0 };
     this._wireTabs();
+    this._wireCaptionControls();
+    this._wireHighlight();
   }
 
   _wireTabs() {
@@ -26,13 +39,100 @@ export class Player {
     }
   }
 
+  _wireCaptionControls() {
+    const words = $("#cap-words");
+    const min = $("#cap-min");
+    const strip = $("#cap-strip");
+    if (!words) return;
+
+    const changed = () => {
+      this.captions = {
+        words: Number(words.value),
+        minDuration: Number(min.value),
+        strip: strip.checked,
+      };
+      // Everything the captions feed from is re-pointed at the new URL. The
+      // audio is deliberately left alone: nothing about it changed, and
+      // reloading it would restart playback mid-listen.
+      if (!this.current) return;
+      this._attachCaptions();
+      this._renderDownloads();
+      this._renderCues();
+    };
+    for (const control of [words, min, strip]) {
+      control.addEventListener("change", changed);
+    }
+  }
+
+  /** Point the controls at the density this recording was stored at. */
+  _resetCaptionControls(generation) {
+    this.captions = {
+      words: generation.words_per_cue || 7,
+      strip: false,
+      minDuration: 0,
+    };
+    if (!this.captionControls) return;
+    this.captionControls.hidden = !generation.can_regroup || !generation.urls.vtt;
+    $("#cap-words").value = String(this.captions.words);
+    $("#cap-min").value = "0";
+    $("#cap-strip").checked = false;
+  }
+
+  /* Highlighting is driven from our own parsed cues rather than the track's
+     `cuechange`, which would mean waiting on the TextTrack to load and
+     mapping its cues back onto the rows. */
+  _wireHighlight() {
+    const sync = () => this._highlight(this.audio.currentTime);
+    this.audio.addEventListener("timeupdate", sync);
+    this.audio.addEventListener("seeked", sync);
+  }
+
+  _highlight(time) {
+    if (!this.cueRows.length) return;
+    const index = this.cues.findIndex((cue) => time >= cue.start && time < cue.end);
+    if (index === -1 && this.activeCue === -1) return;
+    if (index === this.activeCue) return;
+    if (this.activeCue >= 0) this.cueRows[this.activeCue].classList.remove("is-active");
+    this.activeCue = index;
+    if (index < 0) return;
+    const row = this.cueRows[index];
+    row.classList.add("is-active");
+    if (this.cuesPanel.hidden) return;
+    row.scrollIntoView({ block: "nearest" });
+  }
+
+  /** The subtitle URL for the density currently selected. */
+  _subtitleUrl(kind) {
+    const base = this.current && this.current.urls[kind];
+    if (!base) return null;
+    // Older recordings kept no word timings; only the density they were
+    // rendered at is available, so ask for exactly that.
+    if (!this.current.can_regroup) return base;
+    // Asking for what's already on disk would make the server recompute it
+    // and cost the response its immutable caching. Take the file.
+    if (
+      this.captions.words === (this.current.words_per_cue || 7) &&
+      !this.captions.strip &&
+      this.captions.minDuration <= 0
+    ) {
+      return base;
+    }
+    const params = new URLSearchParams({ words: String(this.captions.words) });
+    if (this.captions.strip) params.set("strip_punctuation", "1");
+    if (this.captions.minDuration > 0) {
+      params.set("min_duration", String(this.captions.minDuration));
+    }
+    return `${base}?${params}`;
+  }
+
   /** Show a generation - both a fresh one and one replayed from history. */
   show(generation, { autoplay = false } = {}) {
     this.current = generation;
     this.panel.hidden = false;
+    this._resetCaptionControls(generation);
 
     this.audio.src = generation.urls.audio;
-    this._attachCaptions(generation);
+    this._attachCaptions();
     this.audio.load();
     if (autoplay) {
       this.audio.play().catch(() => {
@@ -41,19 +141,20 @@ export class Player {
     }
 
     this._renderStats(generation);
-    this._renderDownloads(generation);
+    this._renderDownloads();
     this.preparedPanel.textContent = generation.prepared_text || generation.text || "";
-    this._renderCues(generation);
+    this._renderCues();
     this.panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
-  _attachCaptions(generation) {
+  _attachCaptions() {
     for (const track of Array.from(this.audio.querySelectorAll("track"))) track.remove();
-    if (!generation.urls.vtt) return;
+    const src = this._subtitleUrl("vtt");
+    if (!src) return;
     this.audio.append(
       el("track", {
         kind: "captions",
-        src: generation.urls.vtt,
+        src,
         srclang: "he",
         label: "עברית",
         default: true,
@@ -88,10 +189,12 @@ export class Player {
     );
   }
 
-  _renderDownloads(generation) {
-    const links = [["MP3", `${generation.urls.audio}?download=1`, true]];
-    if (generation.urls.srt) links.push(["SRT", generation.urls.srt, false]);
-    if (generation.urls.vtt) links.push(["VTT", generation.urls.vtt, false]);
+  _renderDownloads() {
+    const links = [["MP3", `${this.current.urls.audio}?download=1`, true]];
+    for (const kind of ["srt", "vtt"]) {
+      const href = this._subtitleUrl(kind);
+      if (href) links.push([kind.toUpperCase(), href, false]);
+    }
 
     this.downloads.replaceChildren(
       ...links.map(([label, href, primary]) =>
@@ -105,28 +208,36 @@ export class Player {
     );
   }
 
-  async _renderCues(generation) {
-    if (!generation.urls.vtt) {
+  async _renderCues() {
+    this.cueRows = [];
+    this.cues = [];
+    this.activeCue = -1;
+
+    const url = this._subtitleUrl("vtt");
+    if (!url) {
       this.cuesPanel.textContent = "לא נוצרו כתוביות עבור קובץ זה.";
       return;
     }
     this.cuesPanel.textContent = "טוען כתוביות…";
+    // A slow re-render must not overwrite a faster later one.
+    const token = (this._cueToken = Symbol("cues"));
     try {
-      const response = await fetch(generation.urls.vtt, { credentials: "same-origin" });
+      const response = await fetch(url, { credentials: "same-origin" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const cues = parseVtt(await response.text());
-      this.cuesPanel.replaceChildren(
-        el(
-          "ul",
-          { class: "cue-list" },
-          cues.map((cue) =>
-            el("li", {}, [
-              el("span", { class: "cue-time", text: formatDuration(cue.start) }),
-              el("span", { text: cue.text }),
-            ])
-          )
-        )
+      if (token !== this._cueToken) return;
+      const rows = cues.map((cue) =>
+        el("li", {}, [
+          el("span", { class: "cue-time", text: formatDuration(cue.start) }),
+          el("span", { text: cue.text }),
+        ])
       );
+      this.cuesPanel.replaceChildren(el("ul", { class: "cue-list" }, rows));
+      this.cues = cues;
+      this.cueRows = rows;
+      this._highlight(this.audio.currentTime);
     } catch (error) {
+      if (token !== this._cueToken) return;
       this.cuesPanel.textContent = "לא ניתן לטעון את הכתוביות.";
     }
   }

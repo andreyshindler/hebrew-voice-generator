@@ -17,6 +17,16 @@ class TestSay:
         assert out.exists()
         assert out.with_suffix(".srt").read_text(encoding="utf-8").startswith("1\n")
 
+    def test_words_in_cue_gives_one_cue_per_word(self, monkeypatch, tmp_path):
+        fakes.install(monkeypatch, synth)
+        out = tmp_path / "vo.mp3"
+        text = "אחת שתיים שלוש ארבע"
+        assert cli.main(
+            ["say", text, "-o", str(out), "--srt", "--words-in-cue", "1"]
+        ) == 0
+        srt = out.with_suffix(".srt").read_text(encoding="utf-8")
+        assert [b.strip().split("\n")[-1] for b in srt.strip().split("\n\n")] == text.split()
+
     def test_reads_a_script_file(self, monkeypatch, tmp_path):
         fakes.install(monkeypatch, synth)
         script = tmp_path / "script.txt"

@@ -126,6 +126,17 @@
       <span>יצירת כתוביות <small>קובצי SRT ו‑VTT מסונכרנים</small></span>
     </label>
 
+    <div class="density-row" id="density-row">
+      <label for="words_per_cue">צפיפות כתוביות</label>
+      <select id="words_per_cue">
+        <option value="1">מילה אחת (קריוקי)</option>
+        <option value="2">שתי מילים</option>
+        <option value="3">שלוש מילים</option>
+        <option value="7" selected>שורות קריאות</option>
+      </select>
+      <small class="density-note">אפשר לשנות גם אחרי היצירה, בלי לבזבז מכסה.</small>
+    </div>
+
     <div class="generate-bar">
       <button type="button" class="btn btn-primary btn-generate" id="generate">
         <span class="btn-label">צור שמע</span>
@@ -142,6 +153,34 @@
       <audio id="player" controls preload="metadata" crossorigin="anonymous"></audio>
       <dl class="result-stats" id="result-stats"></dl>
       <div class="download-row" id="download-row"></div>
+
+      <!-- Re-renders the subtitles from the stored word timings. No new
+           synthesis, so no quota and no wait. -->
+      <div class="caption-controls" id="caption-controls" hidden>
+        <div class="caption-control">
+          <label for="cap-words">צפיפות</label>
+          <select id="cap-words">
+            <option value="1">מילה אחת (קריוקי)</option>
+            <option value="2">שתי מילים</option>
+            <option value="3">שלוש מילים</option>
+            <option value="7">שורות קריאות</option>
+          </select>
+        </div>
+        <div class="caption-control">
+          <label for="cap-min">משך מינימלי</label>
+          <select id="cap-min">
+            <option value="0">ללא</option>
+            <option value="0.3">0.3 שנ׳</option>
+            <option value="0.5">0.5 שנ׳</option>
+            <option value="0.8">0.8 שנ׳</option>
+          </select>
+        </div>
+        <label class="caption-check">
+          <input type="checkbox" id="cap-strip">
+          <span>ללא סימני פיסוק</span>
+        </label>
+      </div>
+
       <div class="result-tabs">
         <button type="button" class="tab is-active" data-tab="prepared">טקסט מוקרא</button>
         <button type="button" class="tab" data-tab="cues">כתוביות</button>

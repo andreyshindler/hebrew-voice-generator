@@ -106,8 +106,9 @@ class TestDeletion:
             f"/api/generations/{created['id']}", headers=csrf(auth_client)
         ).status_code == 204
         assert auth_client.get("/api/generations").json()["items"] == []
-        assert not list(audio.rglob("*.mp3"))
-        assert not list(audio.rglob("*.srt"))
+        # Nothing left behind: audio, both subtitle files, and the word
+        # timings kept for re-rendering them.
+        assert not list(audio.rglob("*"))
 
     def test_deleting_twice_is_a_404(self, auth_client, fake_tts):
         created = generate(auth_client)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import math
 import re
 from dataclasses import dataclass, field
@@ -24,6 +25,11 @@ __all__ = [
     "to_srt",
     "to_vtt",
     "merge_cues",
+    "group_cues",
+    "dump_cues",
+    "load_cues",
+    "READABLE_WORDS_PER_CUE",
+    "MAX_WORDS_PER_CUE",
 ]
 
 ProgressFn = Callable[[str], None]
@@ -207,6 +213,133 @@ def merge_cues(
     return merged
 
 
+#: The default density: comfortable reading lines, and what every generation
+#: was rendered at before the density control existed.
+READABLE_WORDS_PER_CUE = 7
+#: Beyond this the "cue" stops being a caption and starts being a paragraph.
+MAX_WORDS_PER_CUE = 20
+
+#: Above the readable preset, the char cap gets out of the way. ``merge_cues``
+#: applies ``max_words`` and ``max_chars`` as *independent* limits, so leaving
+#: it at 42 would cap a 12-word request at roughly six Hebrew words and make
+#: the control look broken. Long Hebrew words run to about this many
+#: characters, so this is the width at which the word count is the only limit
+#: that can bite.
+_ROOMY_CHARS_PER_WORD = 16
+#: Trailing marks some editors misplace when a caption is dropped into a
+#: right-to-left run. Stripping them cannot change the audio: the punctuation
+#: was spoken before the cues were ever split.
+_TRAILING_PUNCTUATION = ".,!?:;"
+
+
+def _chars_for(words_per_cue: int) -> int:
+    """The char cap that lets ``words_per_cue`` actually be the limit."""
+    if words_per_cue <= READABLE_WORDS_PER_CUE:
+        # At or below the default the char cap is the point, not an accident:
+        # a 42-character line is what makes seven words readable.
+        return 42
+    return _ROOMY_CHARS_PER_WORD * words_per_cue
+
+
+def _strip_trailing_punctuation(text: str) -> str:
+    stripped = text.rstrip(_TRAILING_PUNCTUATION + " \t")
+    # A cue that was *only* punctuation keeps what it had; an empty caption is
+    # worse than a stray comma.
+    return stripped or text
+
+
+def _enforce_min_duration(cues: List[Cue], minimum: float) -> List[Cue]:
+    """Stretch cues that are too short to read, never into the next one.
+
+    One-word cues on short Hebrew words can run to 150 ms, which flickers.
+    """
+    if minimum <= 0:
+        return cues
+    for index, cue in enumerate(cues):
+        if cue.duration >= minimum:
+            continue
+        wanted = cue.start + minimum
+        if index + 1 < len(cues):
+            wanted = min(wanted, cues[index + 1].start)
+        # min() above must never make a cue *shorter* than it already was.
+        cues[index] = Cue(cue.start, max(cue.end, wanted), cue.text)
+    return cues
+
+
+def group_cues(
+    word_cues: Sequence[Cue],
+    *,
+    words_per_cue: int = READABLE_WORDS_PER_CUE,
+    strip_punctuation: bool = False,
+    min_duration: float = 0.0,
+    max_gap: float = 0.6,
+) -> List[Cue]:
+    """Regroup word-level cues at a chosen density.
+
+    The knob behind the caption styles: ``words_per_cue=1`` gives the
+    word-by-word "karaoke" look short-form video editors want, 2-3 gives the
+    two-word trailing style, and the default gives readable subtitle lines.
+
+    Args:
+        word_cues: Per-word cues in order, as produced with
+            ``boundary="WordBoundary"``.
+        words_per_cue: Most words in one cue, 1 to :data:`MAX_WORDS_PER_CUE`.
+        strip_punctuation: Drop trailing ``. , ! ? : ;`` from each cue.
+        min_duration: Stretch cues shorter than this, up to the next cue.
+        max_gap: Break a cue when the silence between words exceeds this.
+
+    Raises:
+        ValueError: If ``words_per_cue`` is outside the supported range.
+    """
+    if not 1 <= words_per_cue <= MAX_WORDS_PER_CUE:
+        raise ValueError(f"words_per_cue must be 1..{MAX_WORDS_PER_CUE}, got {words_per_cue}")
+
+    grouped = merge_cues(
+        word_cues,
+        max_words=words_per_cue,
+        max_chars=_chars_for(words_per_cue),
+        max_gap=max_gap,
+    )
+    if strip_punctuation:
+        # After merging, never before: merge_cues breaks a line on a word that
+        # ends a sentence, and stripping first would hide every one of them.
+        grouped = [Cue(c.start, c.end, _strip_trailing_punctuation(c.text)) for c in grouped]
+    return _enforce_min_duration(grouped, min_duration)
+
+
+#: Bumped if the on-disk cue format ever changes shape.
+CUES_FORMAT_VERSION = 1
+
+
+def dump_cues(cues: Sequence[Cue]) -> str:
+    """Serialise word cues for storage, so they can be regrouped later.
+
+    Positional triples rather than objects: this file is written once per
+    generation and read on every subtitle download, and the keys would be
+    three quarters of it.
+    """
+    payload = {
+        "version": CUES_FORMAT_VERSION,
+        "cues": [[round(c.start, 3), round(c.end, 3), c.text] for c in cues],
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def load_cues(raw: Union[str, bytes]) -> List[Cue]:
+    """Parse what :func:`dump_cues` wrote.
+
+    Raises:
+        ValueError: If the payload isn't a cue file this version understands.
+    """
+    try:
+        payload = json.loads(raw)
+        if payload.get("version") != CUES_FORMAT_VERSION:
+            raise ValueError(f"unsupported cue format version {payload.get('version')!r}")
+        return [Cue(float(start), float(end), str(text)) for start, end, text in payload["cues"]]
+    except (json.JSONDecodeError, AttributeError, KeyError, TypeError) as exc:
+        raise ValueError(f"not a readable cue file: {exc}") from exc
+
+
 def to_srt(cues: Sequence[Cue]) -> str:
     """Render cues as SubRip (.srt)."""
     blocks = []
@@ -324,6 +457,7 @@ async def synthesize(
     srt: Optional[Union[str, Path]] = None,
     vtt: Optional[Union[str, Path]] = None,
     merge_subtitles: bool = True,
+    words_per_cue: int = READABLE_WORDS_PER_CUE,
     retain_audio: bool = True,
     already_prepared: bool = False,
     progress: Optional[ProgressFn] = None,
@@ -336,7 +470,9 @@ async def synthesize(
         opts: Voice and transport settings.
         srt: Optional path for SubRip subtitles.
         vtt: Optional path for WebVTT subtitles.
-        merge_subtitles: Merge word cues into readable lines before writing.
+        merge_subtitles: Merge word cues into lines before writing. Turn this
+            off to keep one cue per boundary event exactly as it arrived.
+        words_per_cue: Density of the merged cues. ``1`` is word-by-word.
         retain_audio: Keep the MP3 in :attr:`Result.audio`. Batch callers set
             this to ``False`` so a long book doesn't sit in memory.
         already_prepared: Skip the Hebrew cleanup pipeline (the caller ran it).
@@ -378,7 +514,10 @@ async def synthesize(
         if progress:
             progress(f"wrote {path} ({len(audio):,} bytes)")
 
-    out_cues = merge_cues(cues) if (merge_subtitles and opts.boundary == "WordBoundary") else list(cues)
+    if merge_subtitles and opts.boundary == "WordBoundary":
+        out_cues = group_cues(cues, words_per_cue=words_per_cue)
+    else:
+        out_cues = list(cues)
     if srt:
         await asyncio.to_thread(_write_text, Path(srt), to_srt(out_cues))
         if progress:
