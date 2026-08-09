@@ -6,13 +6,13 @@ import { $, ICONS, el, formatDuration, icon, relativeTime, toast } from "./ui.js
 const PAGE_SIZE = 15;
 
 export class History {
-  constructor({ voices, onPlay, onRestore }) {
+  constructor({ voices, onOpen, onRestore }) {
     this.voiceLabels = Object.fromEntries(voices.map((v) => [v.id, v.label]));
-    this.onPlay = onPlay;
+    this.onOpen = onOpen;
     this.onRestore = onRestore;
     this.items = [];
     this.nextBefore = null;
-    this.playingId = null;
+    this.currentId = null;
 
     this.list = $("#history-list");
     this.empty = $("#history-empty");
@@ -40,8 +40,9 @@ export class History {
     this.render();
   }
 
-  markPlaying(id) {
-    this.playingId = id;
+  /** Highlight whichever recording the player is showing, playing or not. */
+  markCurrent(id) {
+    this.currentId = id;
     this.render();
   }
 
@@ -67,20 +68,34 @@ export class History {
     return el(
       "li",
       {
-        class: `history-item${item.id === this.playingId ? " is-playing" : ""}`,
+        class: `history-item${item.id === this.currentId ? " is-current" : ""}`,
         dataset: { id: item.id },
       },
       [
-        el("div", {}, [
-          el("div", { class: "history-title", text: item.title, title: item.title }),
-          el("div", { class: "history-meta" }, [
-            el("span", { class: "voice-badge", text: this.voiceLabels[item.voice] || item.voice }),
-            el("span", { text: formatDuration(item.duration) }),
-            el("span", { text: relativeTime(item.created_at) }),
-          ]),
-        ]),
+        // A real button, stretched over the whole card in CSS: clicking
+        // anywhere but the action buttons loads the recording without playing
+        // it. Keyboard and screen readers get the same thing for free.
+        el(
+          "button",
+          {
+            type: "button",
+            class: "history-open",
+            onclick: () => this._open(item, { autoplay: false }),
+          },
+          [
+            el("div", { class: "history-title", text: item.title, title: item.title }),
+            el("div", { class: "history-meta" }, [
+              el("span", {
+                class: "voice-badge",
+                text: this.voiceLabels[item.voice] || item.voice,
+              }),
+              el("span", { text: formatDuration(item.duration) }),
+              el("span", { text: relativeTime(item.created_at) }),
+            ]),
+          ]
+        ),
         el("div", { class: "history-actions" }, [
-          action("השמעה", ICONS.play, () => this.onPlay(item)),
+          action("השמעה", ICONS.play, () => this._open(item, { autoplay: true })),
           el(
             "a",
             {
@@ -97,6 +112,17 @@ export class History {
         ]),
       ]
     );
+  }
+
+  /* The list payload is the short one - no text, no prepared text - so fetch
+     the full record before handing it to the player, or the "טקסט מוקרא" tab
+     would come up empty. */
+  async _open(item, { autoplay }) {
+    try {
+      this.onOpen(await api.generation(item.id), { autoplay });
+    } catch (error) {
+      toast(error.message, "error");
+    }
   }
 
   async _restore(item) {

@@ -16,9 +16,9 @@ const composer = new Composer({
 const player = new Player();
 const history = new History({
   voices: bootstrap.voices,
-  onPlay: (item) => {
-    player.show(item, { autoplay: true });
-    history.markPlaying(item.id);
+  onOpen: (generation, { autoplay }) => {
+    player.show(generation, { autoplay });
+    history.markCurrent(generation.id);
   },
   onRestore: (generation) => {
     composer.load(generation);
@@ -73,7 +73,7 @@ async function generate() {
     const generation = await api.synthesize(composer.payload());
     player.show(generation, { autoplay: true });
     history.prepend(generation);
-    history.markPlaying(generation.id);
+    history.markCurrent(generation.id);
     renderQuota({ ...generation.quota, used_today: generation.quota.used_today });
     statusLabel.textContent = `מוכן תוך ${Math.round((Date.now() - started) / 1000)} שניות`;
   } catch (error) {
