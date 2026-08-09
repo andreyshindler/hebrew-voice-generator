@@ -147,7 +147,7 @@ whether they support Hebrew; the file here was written from the synthesiser's ow
 boundaries, so the timings are exact rather than recognised, and importing one sidesteps
 the language-support question entirely.
 
-Pick the density before you generate, or change it afterwards in the result card:
+Set the density in the result card, after generating:
 
 | Setting | What you get |
 | --- | --- |

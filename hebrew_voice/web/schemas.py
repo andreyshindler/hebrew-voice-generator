@@ -71,6 +71,10 @@ class SynthesizeRequest(CleanupOptions):
     #: "karaoke" style video editors want. Only the *initial* density: the word
     #: timings are kept, so the subtitle endpoints can re-render at any other
     #: value afterwards.
+    #:
+    #: The web UI never sends this - it takes the default and lets the result
+    #: card re-render, so the density on disk is the one the plain (cacheable)
+    #: subtitle URLs serve. API and CLI callers can still choose up front.
     words_per_cue: int = Field(
         default=READABLE_WORDS_PER_CUE, ge=1, le=MAX_WORDS_PER_CUE
     )

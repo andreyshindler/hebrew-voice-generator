@@ -17,7 +17,6 @@ const DEFAULTS = {
   expand_abbreviations: true,
   expand_acronyms: true,
   subtitles: true,
-  words_per_cue: 7,
 };
 
 const CLEANUP_FLAGS = [
@@ -89,7 +88,6 @@ export class Composer {
       pitch: this.state.pitch,
       volume: this.state.volume,
       subtitles: this.state.subtitles,
-      words_per_cue: this.state.words_per_cue,
       keep_niqqud: this.state.keep_niqqud,
       expand_symbols: this.state.expand_symbols,
       expand_abbreviations: this.state.expand_abbreviations,
@@ -103,7 +101,6 @@ export class Composer {
     this.state.rate = generation.rate;
     this.state.pitch = generation.pitch;
     this.state.volume = generation.volume;
-    if (generation.words_per_cue) this.state.words_per_cue = generation.words_per_cue;
     Object.assign(this.state, generation.options || {});
     this._restoreControls();
     this._renderVoices();
@@ -163,13 +160,6 @@ export class Composer {
       $(`#${key}`).checked = Boolean(this.state[key]);
     }
     $("#subtitles").checked = Boolean(this.state.subtitles);
-    $("#words_per_cue").value = String(this.state.words_per_cue);
-    this._syncSubtitleControls();
-  }
-
-  /** The density only means anything if subtitles are being written at all. */
-  _syncSubtitleControls() {
-    $("#density-row").hidden = !this.state.subtitles;
   }
 
   _renderSliderValue(key) {
@@ -252,11 +242,6 @@ export class Composer {
     }
     $("#subtitles").addEventListener("change", (event) => {
       this.state.subtitles = event.target.checked;
-      this._syncSubtitleControls();
-      this._saveOptions();
-    });
-    $("#words_per_cue").addEventListener("change", (event) => {
-      this.state.words_per_cue = Number(event.target.value);
       this._saveOptions();
     });
   }
