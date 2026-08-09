@@ -102,6 +102,11 @@ class Generation:
     audio_bytes: int
     duration_ms: int
     cue_count: int
+    #: Word-level cue timings on disk. Absent on rows written before the
+    #: density control existed, and on generations made without subtitles.
+    cues_rel: Optional[str] = None
+    #: Words per cue in the stored subtitle files.
+    words_per_cue: int = 7
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Generation":
@@ -127,6 +132,8 @@ class Generation:
             audio_bytes=row["audio_bytes"],
             duration_ms=row["duration_ms"],
             cue_count=row["cue_count"],
+            cues_rel=row["cues_rel"],
+            words_per_cue=row["words_per_cue"],
         )
 
     @property
@@ -153,6 +160,14 @@ class Generation:
             "duration": self.duration,
             "audio_bytes": self.audio_bytes,
             "cue_count": self.cue_count,
+            # Whether the word timings were kept, and so whether the subtitle
+            # endpoints will honour ?words=. False for anything made before
+            # the density control existed - the UI hides the control rather
+            # than offering one that can't work.
+            "can_regroup": self.cues_rel is not None,
+            # The density the stored files were rendered at, so the result
+            # card opens showing what is actually on disk.
+            "words_per_cue": self.words_per_cue,
             "urls": {
                 "audio": f"{base}/api/generations/{self.id}/audio.mp3",
                 "srt": f"{base}/api/generations/{self.id}/subtitles.srt" if self.srt_rel else None,

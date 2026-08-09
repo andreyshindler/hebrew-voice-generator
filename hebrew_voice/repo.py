@@ -335,16 +335,16 @@ def insert_generation(db: Path, gen: Generation) -> None:
                 (id, user_id, created_at, title, text_raw, text_prepared, char_count,
                  voice, rate, pitch, volume, keep_niqqud, expand_symbols,
                  expand_abbreviations, expand_acronyms, audio_rel, srt_rel, vtt_rel,
-                 audio_bytes, duration_ms, cue_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cues_rel, words_per_cue, audio_bytes, duration_ms, cue_count)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 gen.id, gen.user_id, gen.created_at, gen.title, gen.text_raw,
                 gen.text_prepared, gen.char_count, gen.voice, gen.rate, gen.pitch,
                 gen.volume, int(gen.keep_niqqud), int(gen.expand_symbols),
                 int(gen.expand_abbreviations), int(gen.expand_acronyms),
-                gen.audio_rel, gen.srt_rel, gen.vtt_rel, gen.audio_bytes,
-                gen.duration_ms, gen.cue_count,
+                gen.audio_rel, gen.srt_rel, gen.vtt_rel, gen.cues_rel,
+                gen.words_per_cue, gen.audio_bytes, gen.duration_ms, gen.cue_count,
             ),
         )
 

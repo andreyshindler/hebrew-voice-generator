@@ -105,6 +105,16 @@ MIGRATIONS: List[Tuple[int, str]] = [
         CREATE INDEX idx_email_tokens_expires ON email_tokens(expires_at);
         """,
     ),
+    (
+        3,
+        # Per-word cue timings, kept on disk so subtitles can be re-rendered at
+        # a different density without re-synthesising. Rows that predate this
+        # have no cues file and can only serve the density they were made at.
+        """
+        ALTER TABLE generations ADD COLUMN cues_rel TEXT;
+        ALTER TABLE generations ADD COLUMN words_per_cue INTEGER NOT NULL DEFAULT 7;
+        """,
+    ),
 ]
 
 

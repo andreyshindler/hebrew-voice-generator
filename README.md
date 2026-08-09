@@ -27,7 +27,10 @@ it on a VPS and hand the URL to other people.
   `50 אחוז`), moves currency signs to where Hebrew reads them (`$50` → `50 דולר`), and
   turns acronyms into words so `צה"ל` is pronounced rather than spelled out.
   Every step is a toggle, with a live preview of the text that will really be spoken.
-- **Subtitles** — word-timed SRT and WebVTT, generated in the same pass as the audio.
+- **Subtitles** — word-timed SRT and WebVTT, generated in the same pass as the audio, at
+  whatever density you want: one word per cue for karaoke-style video captions, two or
+  three for the trailing look, or readable lines. Changeable *after* the fact, on anything
+  in your history, without re-synthesising.
 - **Script upload** — drop a `.txt` file onto the text box; it's read in the browser and
   loaded into the editor, still editable before you generate.
 - **History** — replay, re-download, or reload the settings of anything you made before.
@@ -78,6 +81,7 @@ hebrew-voice say "שלום עולם" -o test.mp3
 ```bash
 hebrew-voice say "שלום עולם" -o vo.mp3          # basic
 hebrew-voice say -f script.txt -o vo.mp3 --srt  # from a file, with subtitles
+hebrew-voice say -f script.txt -o vo.mp3 --srt --words-in-cue 1   # karaoke captions
 hebrew-voice say -f book.txt -o parts/ --split paragraph   # one file per paragraph
 hebrew-voice say "שלום" -o vo.mp3 -v avri -r +15% -p -5Hz  # male voice, faster, lower
 
@@ -132,6 +136,42 @@ of sent, verification link and all, so the whole flow works with no mail server.
 > **Run exactly one worker.** The concurrency cap, the per-user gate, and the rate
 > limiter are in-process. `--workers 4` would silently multiply every limit by four. The
 > workload is network-bound, not CPU-bound, so one worker is the right shape anyway.
+
+---
+
+## Captions for video editors
+
+If the audio is going into CapCut, Premiere, or Resolve, **import the SRT — don't use the
+editor's auto-captions.** Auto-captions run speech recognition over the audio and then ask
+whether they support Hebrew; the file here was written from the synthesiser's own word
+boundaries, so the timings are exact rather than recognised, and importing one sidesteps
+the language-support question entirely.
+
+Pick the density before you generate, or change it afterwards in the result card:
+
+| Setting | What you get |
+| --- | --- |
+| מילה אחת (karaoke) | One cue per word — the word-by-word style short-form video uses. |
+| שתי מילים / שלוש מילים | The "trailing" look: a couple of words on screen at a time. |
+| שורות קריאות | Readable subtitle lines, 7 words / 42 characters. The default. |
+
+Two extras next to it. **משך מינימלי** stretches cues that are too short to read — a
+one-word cue on a short Hebrew word can be 150 ms and flickers — never past the start of
+the next one. **ללא סימני פיסוק** drops trailing `. , ! ? :` from each cue, which helps
+with editors that put the mark on the wrong end of a right-to-left line. Neither touches
+the audio: everything was already spoken before the cues were split.
+
+Changing the density costs nothing. The per-word timings are stored with the recording, so
+re-rendering is a file read — no new synthesis, no quota, no wait. The cue list in the
+result card highlights the current cue as the audio plays, so you can see the effect
+before downloading anything.
+
+In CapCut this is **Captions → Local caption → import** on desktop or web; the mobile app
+can't import a subtitle file. On the CLI it's `--words-in-cue N`.
+
+> That flag is ours. `edge-tts` had a `--words-in-cue` of its own in 6.x, but it's gone in
+> the 7.x line this pins, and 7.x defaults to sentence boundaries — the app asks for
+> `WordBoundary` explicitly, which is what makes per-word timings available at all.
 
 ---
 
@@ -193,7 +233,8 @@ it keeps HTTP range requests (and therefore seeking) working; and re-downloading
 costs nothing.
 
 **Filenames never come from user input.** Artifacts are named after a server-generated
-32-hex id and sharded as `audio/<user>/<year>/<month>/<id>.mp3`. Routes validate the id
+32-hex id and sharded as `audio/<user>/<year>/<month>/<id>.mp3` — plus `.srt`, `.vtt`, and
+a `.cues.json` of the raw word timings that makes re-rendering possible. Routes validate the id
 against `^[0-9a-f]{32}$` before a handler runs, ownership is part of the SQL query, and
 `storage.resolve_under()` refuses any path that resolves outside the data directory.
 

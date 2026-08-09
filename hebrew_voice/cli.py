@@ -16,7 +16,15 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from . import __version__
-from .synth import SynthesisOptions, synthesize, synthesize_batch, synthesize_split, to_srt, to_vtt
+from .synth import (
+    READABLE_WORDS_PER_CUE,
+    SynthesisOptions,
+    synthesize,
+    synthesize_batch,
+    synthesize_split,
+    to_srt,
+    to_vtt,
+)
 from .text import prepare
 from .voices import HEBREW_VOICES, list_hebrew_voices, resolve_voice
 
@@ -43,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
     say.add_argument("--volume", default="+0%", help="volume, e.g. +10%%")
     say.add_argument("--srt", type=Path, nargs="?", const=True, help="also write subtitles")
     say.add_argument("--vtt", type=Path, nargs="?", const=True, help="also write WebVTT")
+    say.add_argument("--words-in-cue", type=int, default=READABLE_WORDS_PER_CUE,
+                     metavar="N", help="words per subtitle cue; 1 is word-by-word karaoke")
     say.add_argument("--keep-niqqud", action="store_true", help="don't strip vowel points")
     say.add_argument("--no-symbols", action="store_true", help="don't read symbols aloud")
     say.add_argument("--no-abbreviations", action="store_true", help="don't expand abbreviations")
@@ -149,6 +159,7 @@ def _cmd_say(args: argparse.Namespace) -> int:
             opts,
             srt=_subtitle_path(args.srt, args.output, ".srt"),
             vtt=_subtitle_path(args.vtt, args.output, ".vtt"),
+            words_per_cue=args.words_in_cue,
             progress=report,
         )
     )

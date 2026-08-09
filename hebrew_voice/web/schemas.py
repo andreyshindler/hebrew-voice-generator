@@ -6,6 +6,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
+from ..synth import MAX_WORDS_PER_CUE, READABLE_WORDS_PER_CUE
+
 __all__ = [
     "SignupRequest",
     "LoginRequest",
@@ -65,6 +67,13 @@ class SynthesizeRequest(CleanupOptions):
     pitch: int = Field(default=0, ge=-50, le=50)
     volume: int = Field(default=0, ge=-50, le=50)
     subtitles: bool = True
+    #: Words per subtitle cue in the stored files. 1 is the word-by-word
+    #: "karaoke" style video editors want. Only the *initial* density: the word
+    #: timings are kept, so the subtitle endpoints can re-render at any other
+    #: value afterwards.
+    words_per_cue: int = Field(
+        default=READABLE_WORDS_PER_CUE, ge=1, le=MAX_WORDS_PER_CUE
+    )
 
     @field_validator("text")
     @classmethod

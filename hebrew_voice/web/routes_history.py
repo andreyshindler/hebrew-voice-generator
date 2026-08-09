@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
@@ -11,9 +11,18 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import repo, storage
 from ..config import Settings
-from ..errors import NotFound
+from ..errors import NotFound, UnprocessableEntity
 from ..models import Generation, User
 from ..storage import GENERATION_ID_RE
+from ..synth import (
+    MAX_WORDS_PER_CUE,
+    READABLE_WORDS_PER_CUE,
+    Cue,
+    group_cues,
+    load_cues,
+    to_srt,
+    to_vtt,
+)
 from .deps import get_settings, require_csrf, require_user, require_verified
 
 router = APIRouter(
@@ -24,6 +33,28 @@ router = APIRouter(
 
 #: Ids are opaque hex, so a cached artifact can never change under its URL.
 _IMMUTABLE = "private, max-age=31536000, immutable"
+
+#: Regrouped subtitles are computed from the query string, which breaks the
+#: premise above - the same URL path now has more than one right answer.
+_REVALIDATE = "private, max-age=0, must-revalidate"
+
+
+#: Density knobs shared by both subtitle endpoints. ``words=None`` means "serve
+#: the file exactly as it was stored", which is the common case and the only
+#: one that touches neither the cue file nor the CPU.
+_WORDS = Query(
+    default=None,
+    ge=1,
+    le=MAX_WORDS_PER_CUE,
+    description="Words per cue. 1 gives the word-by-word karaoke style.",
+)
+_STRIP = Query(default=False, description="Drop trailing punctuation from each cue.")
+_MIN_DURATION = Query(
+    default=0.0,
+    ge=0.0,
+    le=5.0,
+    description="Stretch cues shorter than this many seconds, up to the next cue.",
+)
 
 
 async def _load(settings: Settings, gen_id: str, user: User) -> Generation:
@@ -113,43 +144,125 @@ async def get_audio(
     )
 
 
+def _regrouped(
+    settings: Settings,
+    generation: Generation,
+    *,
+    words: int,
+    strip_punctuation: bool,
+    min_duration: float,
+) -> List[Cue]:
+    """Re-render this generation's cues at a different density.
+
+    The per-word timings were saved alongside the audio, so this costs a small
+    file read and no quota - the alternative would be synthesising again.
+    """
+    if not generation.cues_rel:
+        # Made before the word timings were kept, or made without subtitles.
+        # A distinct code so the UI can hide the control instead of showing a
+        # broken one.
+        raise UnprocessableEntity(
+            "This recording was made before subtitle density could be changed",
+            code="cues_unavailable",
+        )
+    try:
+        path = storage.resolve_under(settings.data_dir, generation.cues_rel)
+        word_cues = load_cues(path.read_bytes())
+    except (NotFound, OSError, ValueError) as exc:
+        # A missing or corrupt cue file is not a missing *generation*: the
+        # audio and the stored subtitles are still there and still work.
+        raise UnprocessableEntity(
+            "The stored cue timings could not be read", code="cues_unavailable"
+        ) from exc
+    return group_cues(
+        word_cues,
+        words_per_cue=words,
+        strip_punctuation=strip_punctuation,
+        min_duration=min_duration,
+    )
+
+
+async def _serve_subtitles(
+    settings: Settings,
+    generation: Generation,
+    *,
+    stored_rel: Optional[str],
+    render,
+    media_type: str,
+    disposition: Optional[str],
+    words: Optional[int],
+    strip_punctuation: bool,
+    min_duration: float,
+) -> Response:
+    """Serve subtitles, off disk when possible and recomputed when asked."""
+    if not stored_rel:
+        raise NotFound("This generation has no subtitles")
+    headers = {"Cache-Control": _IMMUTABLE}
+    if disposition:
+        headers["Content-Disposition"] = disposition
+
+    # No density asked for: hand back the file exactly as it was written.
+    if words is None and not strip_punctuation and min_duration <= 0:
+        path = storage.resolve_under(settings.data_dir, stored_rel)
+        return FileResponse(path, media_type=media_type, headers=headers)
+
+    cues = await run_in_threadpool(
+        _regrouped,
+        settings,
+        generation,
+        words=READABLE_WORDS_PER_CUE if words is None else words,
+        strip_punctuation=strip_punctuation,
+        min_duration=min_duration,
+    )
+    # The body now depends on the query string, so it is no longer immutable.
+    headers["Cache-Control"] = _REVALIDATE
+    return Response(render(cues), media_type=media_type, headers=headers)
+
+
 @router.get("/{gen_id}/subtitles.srt")
 async def get_srt(
     gen_id: str = Path(pattern=GENERATION_ID_RE),
+    words: Optional[int] = _WORDS,
+    strip_punctuation: bool = _STRIP,
+    min_duration: float = _MIN_DURATION,
     settings: Settings = Depends(get_settings),
     user: User = Depends(require_user),
 ):
     generation = await _load(settings, gen_id, user)
-    if not generation.srt_rel:
-        raise NotFound("This generation has no subtitles")
-    path = storage.resolve_under(settings.data_dir, generation.srt_rel)
-    return FileResponse(
-        path,
+    return await _serve_subtitles(
+        settings,
+        generation,
+        stored_rel=generation.srt_rel,
+        render=to_srt,
         media_type="text/plain; charset=utf-8",
-        headers={
-            "Cache-Control": _IMMUTABLE,
-            "Content-Disposition": _content_disposition(
-                generation.title, "srt", attachment=True
-            ),
-        },
+        disposition=_content_disposition(generation.title, "srt", attachment=True),
+        words=words,
+        strip_punctuation=strip_punctuation,
+        min_duration=min_duration,
     )
 
 
 @router.get("/{gen_id}/subtitles.vtt")
 async def get_vtt(
     gen_id: str = Path(pattern=GENERATION_ID_RE),
+    words: Optional[int] = _WORDS,
+    strip_punctuation: bool = _STRIP,
+    min_duration: float = _MIN_DURATION,
     settings: Settings = Depends(get_settings),
     user: User = Depends(require_user),
 ):
     """Served inline - the ``<track>`` element can't use an attachment."""
     generation = await _load(settings, gen_id, user)
-    if not generation.vtt_rel:
-        raise NotFound("This generation has no subtitles")
-    path = storage.resolve_under(settings.data_dir, generation.vtt_rel)
-    return FileResponse(
-        path,
+    return await _serve_subtitles(
+        settings,
+        generation,
+        stored_rel=generation.vtt_rel,
+        render=to_vtt,
         media_type="text/vtt; charset=utf-8",
-        headers={"Cache-Control": _IMMUTABLE},
+        disposition=None,
+        words=words,
+        strip_punctuation=strip_punctuation,
+        min_duration=min_duration,
     )
 
 
@@ -164,7 +277,12 @@ async def delete_generation(
     await run_in_threadpool(
         storage.delete_files,
         settings.data_dir,
-        (generation.audio_rel, generation.srt_rel, generation.vtt_rel),
+        (
+            generation.audio_rel,
+            generation.srt_rel,
+            generation.vtt_rel,
+            generation.cues_rel,
+        ),
     )
     await run_in_threadpool(repo.delete_generation, settings.db_path, gen_id, user.id)
     return Response(status_code=204)

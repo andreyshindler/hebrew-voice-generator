@@ -5,9 +5,24 @@ import asyncio
 import pytest
 
 from hebrew_voice import synth
-from hebrew_voice.synth import Cue, SynthesisOptions, merge_cues, synthesize, to_srt, to_vtt
+from hebrew_voice.synth import (
+    Cue,
+    SynthesisOptions,
+    dump_cues,
+    group_cues,
+    load_cues,
+    merge_cues,
+    synthesize,
+    to_srt,
+    to_vtt,
+)
 
 from . import fakes
+
+
+def word_cues(words, *, step=0.35, length=0.3):
+    """Per-word cues laid out like the engine's boundary events."""
+    return [Cue(i * step, i * step + length, word) for i, word in enumerate(words)]
 
 
 class TestOptions:
@@ -55,6 +70,91 @@ class TestSubtitles:
     def test_merge_breaks_after_a_sentence_end(self):
         cues = [Cue(0, 0.4, "שלום."), Cue(0.4, 0.8, "עולם")]
         assert len(merge_cues(cues)) == 2
+
+
+class TestCaptionDensity:
+    """``group_cues`` - the knob behind the karaoke and trailing styles."""
+
+    words = ["שלום", "עולם", "זהו", "מבחן", "קצר", "מאוד", "של", "כתוביות", "בעברית"]
+
+    def test_one_word_per_cue_is_one_cue_per_word(self):
+        grouped = group_cues(word_cues(self.words), words_per_cue=1)
+        assert [c.text for c in grouped] == self.words
+
+    def test_three_words_per_cue(self):
+        grouped = group_cues(word_cues(self.words), words_per_cue=3)
+        assert len(grouped) == 3
+        assert all(len(c.text.split()) == 3 for c in grouped)
+
+    def test_the_char_cap_does_not_quietly_override_the_word_count(self):
+        # merge_cues applies max_words and max_chars independently, so a char
+        # cap tuned for readable lines would cap this at about six words.
+        long_words = ["התייעלות"] * 12  # 8 characters each, 107 with spaces
+        grouped = group_cues(word_cues(long_words), words_per_cue=12)
+        assert len(grouped) == 1
+        assert len(grouped[0].text.split()) == 12
+
+    def test_the_default_still_produces_readable_lines(self):
+        # Unchanged from before the control existed: 7 words, 42 characters.
+        assert group_cues(word_cues(self.words)) == merge_cues(word_cues(self.words))
+
+    def test_timings_are_untouched_by_grouping(self):
+        cues = word_cues(self.words)
+        grouped = group_cues(cues, words_per_cue=1)
+        assert [(c.start, c.end) for c in grouped] == [(c.start, c.end) for c in cues]
+
+    def test_min_duration_stretches_a_short_cue(self):
+        cues = [Cue(0.0, 0.15, "שלום"), Cue(1.0, 1.5, "עולם")]
+        grouped = group_cues(cues, words_per_cue=1, min_duration=0.5)
+        assert grouped[0].end == pytest.approx(0.5)
+
+    def test_min_duration_never_runs_into_the_next_cue(self):
+        cues = [Cue(0.0, 0.15, "שלום"), Cue(0.2, 0.7, "עולם")]
+        grouped = group_cues(cues, words_per_cue=1, min_duration=0.5)
+        assert grouped[0].end == pytest.approx(0.2)
+        assert grouped[0].end <= grouped[1].start
+
+    def test_min_duration_never_shortens_a_cue(self):
+        cues = [Cue(0.0, 2.0, "שלום")]
+        assert group_cues(cues, words_per_cue=1, min_duration=0.5)[0].end == 2.0
+
+    def test_punctuation_stripping_leaves_the_timings_alone(self):
+        cues = [Cue(0.0, 0.4, "שלום,"), Cue(0.4, 0.8, "עולם.")]
+        grouped = group_cues(cues, words_per_cue=1, strip_punctuation=True)
+        assert [c.text for c in grouped] == ["שלום", "עולם"]
+        assert [(c.start, c.end) for c in grouped] == [(0.0, 0.4), (0.4, 0.8)]
+
+    def test_punctuation_stripping_happens_after_the_sentence_break(self):
+        # Stripping first would erase the very marks merge_cues breaks on.
+        cues = [Cue(0.0, 0.4, "שלום."), Cue(0.4, 0.8, "עולם")]
+        grouped = group_cues(cues, words_per_cue=7, strip_punctuation=True)
+        assert [c.text for c in grouped] == ["שלום", "עולם"]
+
+    def test_a_cue_that_is_only_punctuation_is_not_emptied(self):
+        grouped = group_cues([Cue(0.0, 0.4, "...")], words_per_cue=1, strip_punctuation=True)
+        assert grouped[0].text == "..."
+
+    @pytest.mark.parametrize("bad", [0, -1, 21])
+    def test_rejects_a_density_outside_the_range(self, bad):
+        with pytest.raises(ValueError):
+            group_cues(word_cues(self.words), words_per_cue=bad)
+
+    def test_cues_survive_a_round_trip_through_storage(self):
+        cues = word_cues(self.words)
+        loaded = load_cues(dump_cues(cues))
+        assert [c.text for c in loaded] == [c.text for c in cues]
+        # Stored to the millisecond, which is all SRT and VTT can express.
+        for stored, original in zip(loaded, cues):
+            assert stored.start == pytest.approx(original.start, abs=5e-4)
+            assert stored.end == pytest.approx(original.end, abs=5e-4)
+
+    def test_dumped_cues_keep_hebrew_readable(self):
+        assert "שלום" in dump_cues([Cue(0.0, 0.4, "שלום")])
+
+    @pytest.mark.parametrize("junk", ["", "{}", '{"version": 99, "cues": []}', "[1,2]"])
+    def test_unreadable_cue_files_raise_valueerror(self, junk):
+        with pytest.raises(ValueError):
+            load_cues(junk)
 
 
 class TestSynthesize:

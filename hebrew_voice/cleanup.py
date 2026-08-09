@@ -47,7 +47,12 @@ def sweep(settings: Settings, *, dry_run: bool = False) -> SweepResult:
             continue
         result.files_deleted += storage.delete_files(
             settings.data_dir,
-            (generation.audio_rel, generation.srt_rel, generation.vtt_rel),
+            (
+                generation.audio_rel,
+                generation.srt_rel,
+                generation.vtt_rel,
+                generation.cues_rel,
+            ),
         )
         if repo.delete_generation(settings.db_path, generation.id):
             result.generations_deleted += 1

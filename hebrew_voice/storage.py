@@ -42,6 +42,9 @@ class Artifacts:
     audio_rel: str
     srt_rel: Optional[str] = None
     vtt_rel: Optional[str] = None
+    #: Per-word cue timings, kept so subtitles can be re-rendered at another
+    #: density later without re-synthesising. Never served directly.
+    cues_rel: Optional[str] = None
 
 
 def new_generation_id() -> str:
@@ -71,6 +74,7 @@ def relative_paths(user_id: int, gen_id: str, *, when: Optional[float] = None) -
         audio_rel=f"{prefix}/{gen_id}.mp3",
         srt_rel=f"{prefix}/{gen_id}.srt",
         vtt_rel=f"{prefix}/{gen_id}.vtt",
+        cues_rel=f"{prefix}/{gen_id}.cues.json",
     )
 
 
@@ -89,18 +93,28 @@ def write_artifacts(
     audio: bytes,
     srt: Optional[str] = None,
     vtt: Optional[str] = None,
+    cues: Optional[str] = None,
 ) -> Artifacts:
     """Write the MP3 and any subtitles. Returns what was actually written."""
     _atomic_write(data_dir / artifacts.audio_rel, audio)
     srt_rel = None
     vtt_rel = None
+    cues_rel = None
     if srt is not None and artifacts.srt_rel:
         _atomic_write(data_dir / artifacts.srt_rel, srt.encode("utf-8"))
         srt_rel = artifacts.srt_rel
     if vtt is not None and artifacts.vtt_rel:
         _atomic_write(data_dir / artifacts.vtt_rel, vtt.encode("utf-8"))
         vtt_rel = artifacts.vtt_rel
-    return Artifacts(audio_rel=artifacts.audio_rel, srt_rel=srt_rel, vtt_rel=vtt_rel)
+    if cues is not None and artifacts.cues_rel:
+        _atomic_write(data_dir / artifacts.cues_rel, cues.encode("utf-8"))
+        cues_rel = artifacts.cues_rel
+    return Artifacts(
+        audio_rel=artifacts.audio_rel,
+        srt_rel=srt_rel,
+        vtt_rel=vtt_rel,
+        cues_rel=cues_rel,
+    )
 
 
 def resolve_under(root: Path, relative: str) -> Path:
