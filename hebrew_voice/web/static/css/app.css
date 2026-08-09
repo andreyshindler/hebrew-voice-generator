@@ -582,23 +582,6 @@ input[type="range"]::-moz-range-thumb {
   border-block-start: 1px solid var(--border);
 }
 
-.density-row {
-  display: grid;
-  grid-template-columns: auto auto;
-  justify-content: start;
-  align-items: center;
-  gap: 8px 12px;
-  margin-block-start: 10px;
-  padding-inline-start: 26px;   /* line up under the switch's label */
-  font-size: 13.5px;
-}
-.density-row label { color: var(--text-muted); }
-.density-note {
-  grid-column: 1 / -1;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-
 select {
   font: inherit;
   color: var(--text);
