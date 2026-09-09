@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from .db import connect, transaction
-from .models import Generation, Session, User
+from .models import Generation, Render, Session, User
 
 __all__ = [
     "create_user",
@@ -43,6 +43,18 @@ __all__ = [
     "refund_quota",
     "usage_today",
     "expired_generations",
+    "insert_render",
+    "get_render",
+    "renders_for_generation",
+    "render_video_paths",
+    "find_reusable_render",
+    "claim_next_render",
+    "finish_render",
+    "fail_render",
+    "requeue_or_fail_running",
+    "reserve_render_quota",
+    "refund_render_quota",
+    "renders_today",
 ]
 
 
@@ -401,6 +413,153 @@ def delete_generation(db: Path, gen_id: str, user_id: Optional[int] = None) -> b
         return bool(cur.rowcount)
 
 
+# --------------------------------------------------------------------------
+# Renders
+# --------------------------------------------------------------------------
+
+
+def insert_render(db: Path, render: Render) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO renders
+                (id, generation_id, user_id, created_at, started_at, finished_at,
+                 status, error, format, words_per_cue, width, height, fps,
+                 video_rel, video_bytes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                render.id, render.generation_id, render.user_id, render.created_at,
+                render.started_at, render.finished_at, render.status, render.error,
+                render.format, render.words_per_cue, render.width, render.height,
+                render.fps, render.video_rel, render.video_bytes,
+            ),
+        )
+
+
+def get_render(db: Path, render_id: str, user_id: Optional[int] = None) -> Optional[Render]:
+    """Fetch a render, scoped to its owner when ``user_id`` is given."""
+    sql = "SELECT * FROM renders WHERE id = ?"
+    params: List[object] = [render_id]
+    if user_id is not None:
+        sql += " AND user_id = ?"
+        params.append(user_id)
+    with connect(db) as conn:
+        row = conn.execute(sql, params).fetchone()
+    return Render.from_row(row) if row else None
+
+
+def renders_for_generation(db: Path, gen_id: str) -> List[Render]:
+    with connect(db) as conn:
+        rows = conn.execute(
+            "SELECT * FROM renders WHERE generation_id = ? ORDER BY created_at DESC", (gen_id,)
+        ).fetchall()
+    return [Render.from_row(row) for row in rows]
+
+
+def render_video_paths(db: Path, gen_ids: Sequence[str]) -> List[str]:
+    """Every stored video file for these generations.
+
+    Deleting a generation cascades its render *rows* away, but the files on
+    disk are ours to unlink - so callers collect the paths with this first and
+    delete them after.
+    """
+    if not gen_ids:
+        return []
+    placeholders = ",".join("?" for _ in gen_ids)
+    with connect(db) as conn:
+        rows = conn.execute(
+            f"SELECT video_rel FROM renders "
+            f"WHERE generation_id IN ({placeholders}) AND video_rel IS NOT NULL",
+            list(gen_ids),
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def find_reusable_render(
+    db: Path, gen_id: str, *, fmt: str, words_per_cue: int, width: int, height: int, fps: int
+) -> Optional[Render]:
+    """A finished render with identical parameters, if one exists.
+
+    Re-rendering the same thing costs minutes of CPU for a byte-identical
+    file, so the request handler hands back the old one instead.
+    """
+    with connect(db) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM renders
+             WHERE generation_id = ? AND status = 'done' AND video_rel IS NOT NULL
+               AND format = ? AND words_per_cue = ? AND width = ? AND height = ? AND fps = ?
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            (gen_id, fmt, words_per_cue, width, height, fps),
+        ).fetchone()
+    return Render.from_row(row) if row else None
+
+
+def claim_next_render(db: Path) -> Optional[Render]:
+    """Take the oldest queued render and mark it running, atomically.
+
+    The UPDATE ... WHERE status = 'queued' inside the transaction is what makes
+    this safe: if anything else claimed the row first the rowcount is zero and
+    we look again.
+    """
+    now = int(time.time())
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT * FROM renders WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            cur = conn.execute(
+                "UPDATE renders SET status = 'running', started_at = ? "
+                " WHERE id = ? AND status = 'queued'",
+                (now, row["id"]),
+            )
+            if not cur.rowcount:
+                return None
+            claimed = conn.execute("SELECT * FROM renders WHERE id = ?", (row["id"],)).fetchone()
+    return Render.from_row(claimed) if claimed else None
+
+
+def finish_render(db: Path, render_id: str, *, video_rel: str, video_bytes: int) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            UPDATE renders
+               SET status = 'done', finished_at = ?, video_rel = ?, video_bytes = ?, error = NULL
+             WHERE id = ?
+            """,
+            (int(time.time()), video_rel, video_bytes, render_id),
+        )
+
+
+def fail_render(db: Path, render_id: str, error: str) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE renders SET status = 'failed', finished_at = ?, error = ? WHERE id = ?",
+            (int(time.time()), error[:500], render_id),
+        )
+
+
+def requeue_or_fail_running(db: Path, error: str) -> int:
+    """Clear out renders left running by a process that went away.
+
+    The container restarts on every deploy, and a row stuck in ``running`` has
+    no worker behind it - nothing would ever move it again. They are failed
+    rather than requeued on purpose: a job that killed the renderer would
+    otherwise come back and kill it again on every boot.
+    """
+    with connect(db) as conn:
+        cur = conn.execute(
+            "UPDATE renders SET status = 'failed', finished_at = ?, error = ? "
+            " WHERE status = 'running'",
+            (int(time.time()), error),
+        )
+        return cur.rowcount or 0
+
+
 def expired_generations(
     db: Path, *, keep_per_user: int, max_age_days: int
 ) -> List[Generation]:
@@ -474,6 +633,45 @@ def refund_quota(db: Path, user_id: int, day: str, chars: int) -> None:
             """,
             (chars, user_id, day),
         )
+
+
+def reserve_render_quota(db: Path, user_id: int, day: str, limit: int) -> Tuple[bool, int]:
+    """Atomically claim one of today's renders. Mirrors :func:`reserve_quota`."""
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT renders FROM usage_daily WHERE user_id = ? AND day = ?", (user_id, day)
+            ).fetchone()
+            used = row[0] if row else 0
+            if used + 1 > limit:
+                return False, used
+            conn.execute(
+                """
+                INSERT INTO usage_daily (user_id, day, chars, requests, renders)
+                VALUES (?, ?, 0, 0, 1)
+                ON CONFLICT(user_id, day) DO UPDATE
+                    SET renders = renders + 1
+                """,
+                (user_id, day),
+            )
+            return True, used + 1
+
+
+def refund_render_quota(db: Path, user_id: int, day: str) -> None:
+    """Give a render allowance back when the render never produced a file."""
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE usage_daily SET renders = MAX(0, renders - 1) WHERE user_id = ? AND day = ?",
+            (user_id, day),
+        )
+
+
+def renders_today(db: Path, user_id: int, day: str) -> int:
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT renders FROM usage_daily WHERE user_id = ? AND day = ?", (user_id, day)
+        ).fetchone()
+    return row[0] if row else 0
 
 
 def usage_today(db: Path, user_id: int, day: str) -> int:

@@ -190,6 +190,86 @@ class Generation:
         return data
 
 
+#: Output formats a render can be asked for. The value is both the container
+#: HyperFrames is told to produce and the file extension we store it under.
+#:
+#: mp4 burns the captions into a picture and carries the audio. webm is VP9
+#: with a real alpha channel and no audio - a caption overlay to lay over
+#: footage the user already has, which is the case the editors handle worst
+#: for Hebrew.
+RENDER_FORMATS = ("mp4", "webm")
+
+#: The states a render moves through. Only the worker writes the last three.
+RENDER_STATUSES = ("queued", "running", "done", "failed")
+
+
+@dataclass(frozen=True)
+class Render:
+    """One rendered video of a generation, at one set of parameters."""
+
+    id: str
+    generation_id: str
+    user_id: int
+    created_at: int
+    started_at: int
+    finished_at: int
+    status: str
+    error: Optional[str]
+    format: str
+    words_per_cue: int
+    width: int
+    height: int
+    fps: int
+    video_rel: Optional[str] = None
+    video_bytes: int = 0
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Render":
+        return cls(
+            id=row["id"],
+            generation_id=row["generation_id"],
+            user_id=row["user_id"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            status=row["status"],
+            error=row["error"],
+            format=row["format"],
+            words_per_cue=row["words_per_cue"],
+            width=row["width"],
+            height=row["height"],
+            fps=row["fps"],
+            video_rel=row["video_rel"],
+            video_bytes=row["video_bytes"],
+        )
+
+    @property
+    def is_finished(self) -> bool:
+        return self.status in ("done", "failed")
+
+    def public(self, *, base: str = "") -> Dict[str, Any]:
+        """JSON shape for the API.
+
+        The download URL only appears once the file exists, so the client can
+        treat its presence as "ready" without also checking the status.
+        """
+        ready = self.status == "done" and self.video_rel is not None
+        return {
+            "id": self.id,
+            "generation_id": self.generation_id,
+            "created_at": self.created_at,
+            "status": self.status,
+            "error": self.error,
+            "format": self.format,
+            "words_per_cue": self.words_per_cue,
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+            "video_bytes": self.video_bytes,
+            "url": f"{base}/api/renders/{self.id}/video.{self.format}" if ready else None,
+        }
+
+
 @dataclass(frozen=True)
 class UsageDay:
     user_id: int

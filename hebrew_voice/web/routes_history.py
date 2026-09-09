@@ -99,7 +99,7 @@ async def get_generation(
     return generation.public(full=True, base=settings.root_path)
 
 
-def _content_disposition(title: str, extension: str, *, attachment: bool) -> str:
+def content_disposition(title: str, extension: str, *, attachment: bool) -> str:
     """Build a header that survives a Hebrew title.
 
     Sends an ASCII fallback plus the RFC 5987 ``filename*`` form, so browsers
@@ -137,7 +137,7 @@ async def get_audio(
         media_type="audio/mpeg",
         headers={
             "Cache-Control": _IMMUTABLE,
-            "Content-Disposition": _content_disposition(
+            "Content-Disposition": content_disposition(
                 generation.title, "mp3", attachment=download
             ),
         },
@@ -235,7 +235,7 @@ async def get_srt(
         stored_rel=generation.srt_rel,
         render=to_srt,
         media_type="text/plain; charset=utf-8",
-        disposition=_content_disposition(generation.title, "srt", attachment=True),
+        disposition=content_disposition(generation.title, "srt", attachment=True),
         words=words,
         strip_punctuation=strip_punctuation,
         min_duration=min_duration,
@@ -274,6 +274,9 @@ async def delete_generation(
 ):
     """Remove a generation and its files."""
     generation = await _load(settings, gen_id, user)
+    # Deleting the row cascades the render rows away, so their file paths have
+    # to be collected while they still exist or the videos are orphaned.
+    videos = await run_in_threadpool(repo.render_video_paths, settings.db_path, [gen_id])
     await run_in_threadpool(
         storage.delete_files,
         settings.data_dir,
@@ -282,6 +285,7 @@ async def delete_generation(
             generation.srt_rel,
             generation.vtt_rel,
             generation.cues_rel,
+            *videos,
         ),
     )
     await run_in_threadpool(repo.delete_generation, settings.db_path, gen_id, user.id)

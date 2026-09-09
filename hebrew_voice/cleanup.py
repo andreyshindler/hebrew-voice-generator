@@ -45,6 +45,9 @@ def sweep(settings: Settings, *, dry_run: bool = False) -> SweepResult:
         if dry_run:
             result.generations_deleted += 1
             continue
+        # Render rows go with the generation via ON DELETE CASCADE, so their
+        # video paths are read before the row is removed, not after.
+        videos = repo.render_video_paths(settings.db_path, [generation.id])
         result.files_deleted += storage.delete_files(
             settings.data_dir,
             (
@@ -52,6 +55,7 @@ def sweep(settings: Settings, *, dry_run: bool = False) -> SweepResult:
                 generation.srt_rel,
                 generation.vtt_rel,
                 generation.cues_rel,
+                *videos,
             ),
         )
         if repo.delete_generation(settings.db_path, generation.id):

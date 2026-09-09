@@ -12,7 +12,7 @@ import re
 import secrets
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable, Optional
 
 from .errors import NotFound
@@ -20,8 +20,10 @@ from .errors import NotFound
 __all__ = [
     "Artifacts",
     "new_generation_id",
+    "new_render_id",
     "GENERATION_ID_RE",
     "relative_paths",
+    "render_relative_path",
     "write_artifacts",
     "resolve_under",
     "delete_files",
@@ -33,6 +35,10 @@ __all__ = [
 #: before a handler ever runs.
 GENERATION_ID_RE = r"^[0-9a-f]{32}$"
 _ID_RE = re.compile(GENERATION_ID_RE)
+
+#: Extensions we will build a path for. Nothing from a request reaches the
+#: filesystem, but the format does reach a filename, so it is checked here too.
+_FORMAT_RE = re.compile(r"^[a-z0-9]{2,5}$")
 
 
 @dataclass(frozen=True)
@@ -76,6 +82,27 @@ def relative_paths(user_id: int, gen_id: str, *, when: Optional[float] = None) -
         vtt_rel=f"{prefix}/{gen_id}.vtt",
         cues_rel=f"{prefix}/{gen_id}.cues.json",
     )
+
+
+def new_render_id() -> str:
+    """A fresh opaque id for a render, same shape as a generation id."""
+    return secrets.token_hex(16)
+
+
+def render_relative_path(audio_rel: str, render_id: str, fmt: str) -> str:
+    """Where a rendered video for ``audio_rel``'s generation belongs.
+
+    Derived from the audio's own path rather than from today's date, so a
+    render of a months-old generation lands beside it instead of in the
+    current month's directory.
+    """
+    if not _ID_RE.match(render_id):
+        raise ValueError("render id must be 32 hex characters")
+    if not _FORMAT_RE.match(fmt):
+        raise ValueError(f"unsupported render format: {fmt!r}")
+    parent = PurePosixPath(audio_rel).parent
+    stem = PurePosixPath(audio_rel).stem
+    return str(parent / f"{stem}.{render_id}.{fmt}")
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

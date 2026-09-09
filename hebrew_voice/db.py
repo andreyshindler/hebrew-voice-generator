@@ -115,6 +115,42 @@ MIGRATIONS: List[Tuple[int, str]] = [
         ALTER TABLE generations ADD COLUMN words_per_cue INTEGER NOT NULL DEFAULT 7;
         """,
     ),
+    (
+        4,
+        # Rendered videos. A render is parameterised - format, caption density,
+        # frame size - so one generation can have several, which is why these
+        # are rows rather than columns on generations.
+        #
+        # The row is created queued and a background worker moves it through
+        # running to done or failed; video_rel is only set on success.
+        """
+        CREATE TABLE renders (
+            id            TEXT    PRIMARY KEY,
+            generation_id TEXT    NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at    INTEGER NOT NULL,
+            started_at    INTEGER NOT NULL DEFAULT 0,
+            finished_at   INTEGER NOT NULL DEFAULT 0,
+            status        TEXT    NOT NULL,
+            error         TEXT,
+            format        TEXT    NOT NULL,
+            words_per_cue INTEGER NOT NULL,
+            width         INTEGER NOT NULL,
+            height        INTEGER NOT NULL,
+            fps           INTEGER NOT NULL,
+            video_rel     TEXT,
+            video_bytes   INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_renders_generation ON renders(generation_id);
+        CREATE INDEX idx_renders_user_time  ON renders(user_id, created_at DESC);
+        -- How the worker claims queued work, so a poll is not a table scan.
+        CREATE INDEX idx_renders_status     ON renders(status, created_at);
+
+        -- Renders cost far more than synthesis, so they are metered apart
+        -- from the character quota.
+        ALTER TABLE usage_daily ADD COLUMN renders INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 ]
 
 

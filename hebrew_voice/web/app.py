@@ -20,7 +20,8 @@ from .. import cleanup, db, storage
 from ..mailer import mailer_from_settings
 from ..config import Settings, get_settings as load_settings
 from ..errors import AppError, Unauthorized
-from . import routes_auth, routes_history, routes_pages, routes_synth
+from . import routes_auth, routes_history, routes_pages, routes_renders, routes_synth
+from .rendering import RenderWorker
 from .runner import SynthRunner
 
 log = logging.getLogger("hebrew_voice.web")
@@ -56,6 +57,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             type(app.state.mailer).__name__,
         )
         task = asyncio.create_task(_cleanup_loop(settings))
+        worker = None
+        if settings.rendering_enabled:
+            worker = RenderWorker(settings)
+            app.state.render_worker = worker
+            await worker.start()
+            log.info("video rendering via %s", settings.render_url)
         try:
             yield
         finally:
@@ -64,6 +71,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            if worker is not None:
+                await worker.stop()
 
     app = FastAPI(
         title="Hebrew Voice Generator",
@@ -86,6 +95,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(routes_auth.router)
     app.include_router(routes_synth.router)
     app.include_router(routes_history.router)
+    app.include_router(routes_renders.router)
 
     _install_middleware(app, settings)
     _install_error_handlers(app, settings)

@@ -124,6 +124,30 @@ class Settings:
     thread_pool_size: int = 16
     hash_concurrency: int = 4
 
+    # Video rendering. Off unless a renderer URL is configured, so an install
+    # without the sidecar behaves exactly as it did before.
+    render_url: str = ""
+    #: Where the *renderer* sees the data directory. Both containers mount the
+    #: same volume, so this is normally identical to data_dir - it only differs
+    #: when the app runs outside Docker against a containerised renderer.
+    render_data_dir: Optional[Path] = None
+    #: One at a time by default: a render is Chromium plus FFmpeg, and the box
+    #: this runs on is small.
+    max_concurrent_renders: int = 1
+    render_timeout: float = 900.0
+    daily_render_quota: int = 10
+    #: Refuse to render audio longer than this. Render cost is linear in
+    #: duration and a long clip can tie the queue up for a very long time.
+    max_render_seconds: float = 300.0
+    render_width: int = 1280
+    render_height: int = 720
+    #: HyperFrames accepts 24, 30 or 60 only.
+    render_fps: int = 30
+    #: "draft" | "standard" | "high" - the encoder preset.
+    render_quality: str = "standard"
+    #: How often the worker looks for queued jobs.
+    render_poll_seconds: float = 2.0
+
     # Retention
     history_keep: int = 50
     history_max_age_days: int = 30
@@ -175,6 +199,21 @@ class Settings:
     def email_enabled(self) -> bool:
         """True when a real SMTP relay is configured."""
         return bool(self.smtp_host and self.smtp_from)
+
+    @property
+    def renderer_data_dir(self) -> Path:
+        """The data directory as the renderer container addresses it."""
+        return self.render_data_dir or self.data_dir
+
+    @property
+    def rendering_enabled(self) -> bool:
+        """True when a renderer sidecar is configured.
+
+        Everything about video is gated on this, so an install without the
+        sidecar keeps working exactly as before rather than offering a button
+        that can only fail.
+        """
+        return bool(self.render_url)
 
     def verification_link(self, token: str) -> str:
         """The absolute URL that goes in the email.
@@ -246,6 +285,21 @@ class Settings:
             synth_timeout=_float(env, "HV_SYNTH_TIMEOUT", 180.0),
             thread_pool_size=_int(env, "HV_THREAD_POOL_SIZE", 16),
             hash_concurrency=_int(env, "HV_HASH_CONCURRENCY", 4),
+            render_url=(env.get("HV_RENDER_URL") or "").rstrip("/"),
+            render_data_dir=(
+                Path(env["HV_RENDER_DATA_DIR"]).expanduser()
+                if env.get("HV_RENDER_DATA_DIR")
+                else None
+            ),
+            max_concurrent_renders=_int(env, "HV_MAX_CONCURRENT_RENDERS", 1),
+            render_timeout=_float(env, "HV_RENDER_TIMEOUT", 900.0),
+            daily_render_quota=_int(env, "HV_DAILY_RENDER_QUOTA", 10),
+            max_render_seconds=_float(env, "HV_MAX_RENDER_SECONDS", 300.0),
+            render_width=_int(env, "HV_RENDER_WIDTH", 1280),
+            render_height=_int(env, "HV_RENDER_HEIGHT", 720),
+            render_fps=_int(env, "HV_RENDER_FPS", 30),
+            render_quality=(env.get("HV_RENDER_QUALITY") or "standard").lower(),
+            render_poll_seconds=_float(env, "HV_RENDER_POLL_SECONDS", 2.0),
             history_keep=_int(env, "HV_HISTORY_KEEP", 50),
             history_max_age_days=_int(env, "HV_HISTORY_MAX_AGE_DAYS", 30),
             cleanup_interval_min=_int(env, "HV_CLEANUP_INTERVAL_MIN", 60),
@@ -318,6 +372,26 @@ class Settings:
             problems.append("HV_MAX_CHARS must be positive")
         if self.max_concurrent_synth < 1:
             problems.append("HV_MAX_CONCURRENT_SYNTH must be at least 1")
+        if self.rendering_enabled:
+            if self.max_concurrent_renders < 1:
+                problems.append("HV_MAX_CONCURRENT_RENDERS must be at least 1")
+            if self.render_fps not in (24, 30, 60):
+                problems.append(f"HV_RENDER_FPS must be 24, 30 or 60, got {self.render_fps}")
+            if self.render_quality not in ("draft", "standard", "high"):
+                problems.append(
+                    "HV_RENDER_QUALITY must be draft, standard or high, "
+                    f"got {self.render_quality!r}"
+                )
+            # H.264 cannot encode odd dimensions, and the failure surfaces deep
+            # inside FFmpeg rather than here.
+            if self.render_width < 2 or self.render_width % 2:
+                problems.append(
+                    f"HV_RENDER_WIDTH must be a positive even number, got {self.render_width}"
+                )
+            if self.render_height < 2 or self.render_height % 2:
+                problems.append(
+                    f"HV_RENDER_HEIGHT must be a positive even number, got {self.render_height}"
+                )
         if problems:
             raise ValueError("invalid configuration: " + "; ".join(problems))
 
