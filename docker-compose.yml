@@ -1,8 +1,12 @@
 services:
   hebrew-voice:
     build: .
-    image: hebrew-voice:latest
-    container_name: hebrew-voice
+    # Both are overridable so a second stack - a branch running beside
+    # production on the same box - does not collide. Container names are
+    # global to the Docker daemon, not scoped to the compose project, and two
+    # stacks sharing an image tag would overwrite each other's build.
+    image: ${HV_IMAGE:-hebrew-voice}:latest
+    container_name: ${HV_CONTAINER_NAME:-hebrew-voice}
     restart: unless-stopped
 
     # Bound to localhost only - nginx on the host terminates TLS and proxies
@@ -23,7 +27,11 @@ services:
       HV_PORT: "8080"
       # Turns video rendering on. Both containers mount the same volume at
       # /data, so a path in a render request means the same thing to both.
-      HV_RENDER_URL: http://hyperframes:8080
+      #
+      # The single dash means .env can set this to empty to turn rendering off
+      # without editing this file - an `environment:` entry would otherwise
+      # win over env_file and there would be no way to disable it.
+      HV_RENDER_URL: ${HV_RENDER_URL-http://hyperframes:8080}
 
     depends_on:
       - hyperframes
@@ -52,8 +60,8 @@ services:
   # nothing else breaks.
   hyperframes:
     build: ./deploy/render
-    image: hebrew-voice-renderer:latest
-    container_name: hebrew-voice-renderer
+    image: ${HV_RENDER_IMAGE:-hebrew-voice-renderer}:latest
+    container_name: ${HV_RENDER_CONTAINER_NAME:-hebrew-voice-renderer}
     restart: unless-stopped
 
     # Deliberately NOT published. It renders arbitrary HTML in a browser and

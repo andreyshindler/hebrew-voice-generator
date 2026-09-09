@@ -27,7 +27,10 @@ CONTAINER="${HV_CONTAINER:-hebrew-voice}"
 RENDER_SERVICE="${HV_RENDER_SERVICE:-hyperframes}"
 HEALTH_TIMEOUT="${HV_HEALTH_TIMEOUT:-90}"
 KEEP_BACKUPS="${HV_KEEP_BACKUPS:-5}"
-LOCK_FILE="${HV_LOCK_FILE:-/tmp/hebrew-voice-deploy.lock}"
+# Per-checkout, so deploying a branch stack cannot block a production deploy
+# (and vice versa). Two deploys of the *same* checkout still serialise, which
+# is the point - they would fight over the same container.
+LOCK_FILE="${HV_LOCK_FILE:-/tmp/hebrew-voice-deploy-$(printf '%s' "$APP_DIR" | cksum | cut -d' ' -f1).lock}"
 
 PULL=1
 for arg in "$@"; do

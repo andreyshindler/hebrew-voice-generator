@@ -5,6 +5,10 @@ follow when the hostname's root already belongs to another app — that's the
 `srv1515969.hstgr.cloud/voice-gen` case. The [native systemd install](#native-install-at-the-root)
 after it is for owning a whole hostname.
 
+To put a **branch** on the same box at a second URL, to try it before merging,
+see [`BRANCH.md`](BRANCH.md) instead — it shares nothing with production, not
+even the database.
+
 ---
 
 # Docker under a subpath

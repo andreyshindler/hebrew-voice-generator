@@ -1,0 +1,48 @@
+# A second, branch instance beside production on the same hostname.
+#
+#     /voice-gen/        -> production   (main)
+#     /voice-gen-branch/ -> the branch under test
+#
+# Paste these two blocks INTO the same existing `server { ... }` that already
+# carries the /voice-gen/ blocks. Do not add a second server block: the
+# certificate and the hostname are shared.
+#
+# The branch app must know its own public URL, or its links, redirects and
+# cookies will carry production's prefix and the two will fight over the
+# session cookie path:
+#
+#     HV_BASE_URL=https://srv1515969.hstgr.cloud/voice-gen-branch
+#
+# See BRANCH.md for the rest of the setup.
+
+# /voice-gen-branch -> /voice-gen-branch/  (without this the browser resolves
+# relative URLs against /, and the page loads with no CSS).
+location = /voice-gen-branch {
+    return 301 /voice-gen-branch/;
+}
+
+location /voice-gen-branch/ {
+    # HV_PUBLISH_PORT of the BRANCH stack - not production's. 8090 here;
+    # check nothing else on the box already has it:
+    #     sudo nginx -T | grep -oE '127\.0\.0\.1:[0-9]+' | sort -u
+    proxy_pass http://127.0.0.1:8090/;
+
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Must exceed HV_SYNTH_TIMEOUT (default 180s).
+    #
+    # Note this is NOT the ceiling for video: a render is queued and polled
+    # over separate short requests, so a five-minute encode never holds a
+    # connection open. HV_RENDER_TIMEOUT governs that, not nginx.
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+
+    # Audio and video are served with range support; don't buffer them whole.
+    proxy_buffering off;
+
+    client_max_body_size 1m;
+}
