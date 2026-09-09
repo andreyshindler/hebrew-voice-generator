@@ -13,6 +13,14 @@ const POLL_MS = 2500;
    own timeout and would have written a failure. */
 const GIVE_UP_MS = 20 * 60 * 1000;
 
+/* Mirrors RENDER_SIZES on the server, so an existing render can be matched
+   to the selected shape without another round trip. */
+const SIZES = {
+  vertical: [1080, 1920],
+  square: [1080, 1080],
+  landscape: [1280, 720],
+};
+
 const LABELS = {
   queued: "בתור…",
   running: "מייצר וידאו…",
@@ -28,14 +36,17 @@ export class Renders {
     this.result = $("#render-result");
     this.button = $("#render-go");
     this.format = $("#render-format");
+    this.size = $("#render-size");
     this.current = null;
     this.timer = null;
 
     if (!this.enabled) return;
     this.button.addEventListener("click", () => this._start());
-    /* Switching format is a different file, so anything shown for the old one
-       no longer applies. */
-    this.format.addEventListener("change", () => this._reset());
+    /* Either knob makes a different file, so anything shown for the previous
+       combination no longer applies. */
+    for (const control of [this.format, this.size]) {
+      control.addEventListener("change", () => this._reset());
+    }
   }
 
   /** Point the panel at a recording, or hide it when it can't be rendered. */
@@ -73,7 +84,14 @@ export class Renders {
         this._follow(live);
         return;
       }
-      const done = items.find((r) => r.status === "done" && r.format === this.format.value);
+      const [width, height] = SIZES[this.size.value] || [];
+      const done = items.find(
+        (r) =>
+          r.status === "done" &&
+          r.format === this.format.value &&
+          r.width === width &&
+          r.height === height
+      );
       if (done) this._offer(done);
     } catch (error) {
       /* Not worth a toast: the panel simply starts empty and the button works. */
@@ -97,6 +115,7 @@ export class Renders {
     try {
       const render = await api.requestRender(this.current.id, {
         format: this.format.value,
+        size: this.size.value,
       });
       if (render.status === "done") {
         // An identical render already existed, so there is nothing to wait for.

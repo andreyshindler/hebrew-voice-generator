@@ -13,7 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from .. import repo, storage
 from ..config import Settings
 from ..errors import NotFound, QuotaExceeded, RateLimited, UnprocessableEntity
-from ..models import RENDER_FORMATS, Render, User
+from ..models import RENDER_FORMATS, RENDER_SIZES, Render, User
 from ..quota import day_reset_epoch, quota_day
 from ..storage import GENERATION_ID_RE
 from ..synth import MAX_WORDS_PER_CUE
@@ -39,6 +39,9 @@ class RenderRequest(BaseModel):
     #: Caption density, same knob as the subtitle endpoints. Defaults to the
     #: density the generation's stored subtitles were written at.
     words_per_cue: Optional[int] = Field(default=None, ge=1, le=MAX_WORDS_PER_CUE)
+    #: Frame shape by name. An overlay has to match the footage it goes over,
+    #: so this matters more than it looks. Defaults to the server's setting.
+    size: Optional[str] = Field(default=None)
 
 
 def _require_rendering(settings: Settings) -> None:
@@ -84,6 +87,13 @@ async def request_render(
             code="too_long_to_render",
         )
 
+    size = (payload.size or settings.render_size).lower()
+    if size not in RENDER_SIZES:
+        raise UnprocessableEntity(
+            f"Unsupported size {size!r}", code="unsupported_size"
+        )
+    width, height = RENDER_SIZES[size]
+
     words = payload.words_per_cue or generation.words_per_cue
     existing = await run_in_threadpool(
         repo.find_reusable_render,
@@ -91,8 +101,8 @@ async def request_render(
         gen_id,
         fmt=payload.format,
         words_per_cue=words,
-        width=settings.render_width,
-        height=settings.render_height,
+        width=width,
+        height=height,
         fps=settings.render_fps,
     )
     if existing is not None:
@@ -136,8 +146,8 @@ async def request_render(
         error=None,
         format=payload.format,
         words_per_cue=words,
-        width=settings.render_width,
-        height=settings.render_height,
+        width=width,
+        height=height,
         fps=settings.render_fps,
     )
     await run_in_threadpool(repo.insert_render, settings.db_path, render)

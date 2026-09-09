@@ -139,8 +139,9 @@ class Settings:
     #: Refuse to render audio longer than this. Render cost is linear in
     #: duration and a long clip can tie the queue up for a very long time.
     max_render_seconds: float = 300.0
-    render_width: int = 1280
-    render_height: int = 720
+    #: Default frame shape, by name - see models.RENDER_SIZES. The request can
+    #: pick another; this is what it gets when it does not.
+    render_size: str = "vertical"
     #: HyperFrames accepts 24, 30 or 60 only.
     render_fps: int = 30
     #: "draft" | "standard" | "high" - the encoder preset.
@@ -295,8 +296,7 @@ class Settings:
             render_timeout=_float(env, "HV_RENDER_TIMEOUT", 900.0),
             daily_render_quota=_int(env, "HV_DAILY_RENDER_QUOTA", 10),
             max_render_seconds=_float(env, "HV_MAX_RENDER_SECONDS", 300.0),
-            render_width=_int(env, "HV_RENDER_WIDTH", 1280),
-            render_height=_int(env, "HV_RENDER_HEIGHT", 720),
+            render_size=(env.get("HV_RENDER_SIZE") or "vertical").lower(),
             render_fps=_int(env, "HV_RENDER_FPS", 30),
             render_quality=(env.get("HV_RENDER_QUALITY") or "standard").lower(),
             render_poll_seconds=_float(env, "HV_RENDER_POLL_SECONDS", 2.0),
@@ -382,15 +382,12 @@ class Settings:
                     "HV_RENDER_QUALITY must be draft, standard or high, "
                     f"got {self.render_quality!r}"
                 )
-            # H.264 cannot encode odd dimensions, and the failure surfaces deep
-            # inside FFmpeg rather than here.
-            if self.render_width < 2 or self.render_width % 2:
+            from .models import RENDER_SIZES  # local: models imports nothing here
+
+            if self.render_size not in RENDER_SIZES:
                 problems.append(
-                    f"HV_RENDER_WIDTH must be a positive even number, got {self.render_width}"
-                )
-            if self.render_height < 2 or self.render_height % 2:
-                problems.append(
-                    f"HV_RENDER_HEIGHT must be a positive even number, got {self.render_height}"
+                    f"HV_RENDER_SIZE must be one of {', '.join(sorted(RENDER_SIZES))}, "
+                    f"got {self.render_size!r}"
                 )
         if problems:
             raise ValueError("invalid configuration: " + "; ".join(problems))

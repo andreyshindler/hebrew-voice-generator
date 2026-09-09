@@ -202,6 +202,21 @@ RENDER_FORMATS = ("mp4", "webm")
 #: The states a render moves through. Only the worker writes the last three.
 RENDER_STATUSES = ("queued", "running", "done", "failed")
 
+#: Frame sizes a render can be asked for, as (width, height).
+#:
+#: An overlay has to match the footage it is laid over: a 16:9 caption layer on
+#: 9:16 video letterboxes, which defeats the point. Vertical is the default
+#: because that is what the captions are mostly for - short-form video - and it
+#: is the shape CapCut, Reels and TikTok all use.
+#:
+#: Both dimensions are even, which H.264 requires and which fails deep inside
+#: FFmpeg rather than anywhere useful.
+RENDER_SIZES = {
+    "vertical": (1080, 1920),
+    "landscape": (1280, 720),
+    "square": (1080, 1080),
+}
+
 
 @dataclass(frozen=True)
 class Render:

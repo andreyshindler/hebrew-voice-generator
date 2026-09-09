@@ -98,9 +98,24 @@ data-duration="{{ '%.3f' | format(cue.duration) }}">{{ cue.text }}</div>
 )
 
 
-def _font_size(width: int) -> int:
-    """Caption size proportional to the frame, floored so it stays readable."""
-    return max(24, round(width * 0.045))
+def _metrics(width: int, height: int) -> dict:
+    """Caption size and placement for this frame shape.
+
+    Scaled to the *short* edge rather than the width: a 1080-wide vertical
+    frame and a 1280-wide landscape one need captions of similar apparent
+    size, and scaling by width alone makes the vertical one smaller, which is
+    backwards - vertical video is watched on a phone and wants larger text.
+    """
+    short = min(width, height)
+    portrait = height > width
+    return {
+        "font_size": max(24, round(short * 0.062)),
+        # Portrait video is watched in apps that put controls, captions and
+        # handles over the bottom sixth of the screen. Landscape has no such
+        # furniture, so the captions can sit lower.
+        "bottom": round(height * (0.18 if portrait else 0.11)),
+        "stroke": max(1, round(short * 0.0022)),
+    }
 
 
 def build_composition(
@@ -139,7 +154,5 @@ def build_composition(
         audio_src=audio_src,
         transparent=transparent,
         background="#0b0f19",
-        bottom=round(height * 0.11),
-        font_size=_font_size(width),
-        stroke=max(1, round(width * 0.0016)),
+        **_metrics(width, height),
     )

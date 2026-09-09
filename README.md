@@ -210,10 +210,15 @@ knowing:
 - **Renders are metered separately** (`HV_DAILY_RENDER_QUOTA`, 10/day) because one costs
   minutes of CPU where a synthesis costs a second. Asking twice for the identical thing hands
   back the first file instead of encoding it again, and never spends the allowance twice.
-- **720p is the default on purpose.** 1080p is 2.25× the pixels and roughly that much slower.
-  Measure on your own box before raising `HV_RENDER_WIDTH`/`HV_RENDER_HEIGHT` — and note that
-  the transparent format is slower still, since alpha on Linux forces screenshot capture
-  instead of the faster frame path.
+- **The frame shape is chosen per render** — vertical 9:16, square, or landscape 16:9 — and
+  defaults to vertical. That is not cosmetic: a 16:9 caption overlay laid over 9:16 footage
+  letterboxes, which defeats the point of the overlay. Captions scale to the *short* edge, so
+  vertical gets larger text rather than smaller, and sit higher in portrait to clear the
+  controls apps draw over the bottom of the screen.
+- **Vertical is the expensive one**: 2.07M pixels against landscape's 0.92M, so roughly twice
+  the work. The transparent format is slower still, since alpha on Linux forces screenshot
+  capture instead of the faster frame path. Measure on your own box before trusting
+  `HV_RENDER_TIMEOUT`.
 
 Recordings made before per-word timings existed can't be rendered, the same limit the density
 control has.

@@ -34,8 +34,7 @@ def render_settings(settings) -> Settings:
             "render_url": "http://renderer:8080",
             "daily_render_quota": 3,
             "max_render_seconds": 300.0,
-            "render_width": 640,
-            "render_height": 360,
+            "render_size": "landscape",
         }
     )
 
@@ -126,6 +125,62 @@ class TestComposition:
             audio_src="clip.mp3",
         )
         assert '<audio data-start="0"' in html and 'src="clip.mp3"' in html
+
+
+class TestFrameShapes:
+    """An overlay has to match the footage, so the shape is the point."""
+
+    def test_vertical_is_the_default(self, render_client, fake_tts, render_settings):
+        # The fixture pins landscape; without a size the server's setting wins.
+        generation = make_generation(render_client)
+        created = render_client.post(
+            f"/api/generations/{generation['id']}/renders",
+            json={"format": "webm"}, headers=csrf(render_client),
+        ).json()
+        assert (created["width"], created["height"]) == (1280, 720)
+
+    def test_a_request_can_pick_vertical(self, render_client, fake_tts):
+        generation = make_generation(render_client)
+        created = render_client.post(
+            f"/api/generations/{generation['id']}/renders",
+            json={"format": "webm", "size": "vertical"}, headers=csrf(render_client),
+        ).json()
+        assert (created["width"], created["height"]) == (1080, 1920)
+
+    def test_rejects_an_unknown_size(self, render_client, fake_tts):
+        generation = make_generation(render_client)
+        response = render_client.post(
+            f"/api/generations/{generation['id']}/renders",
+            json={"format": "webm", "size": "cinemascope"}, headers=csrf(render_client),
+        )
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "unsupported_size"
+
+    def test_captions_scale_to_the_short_edge(self):
+        """Vertical must not end up with smaller text than landscape.
+
+        Sizing by width alone did exactly that: a 1080-wide portrait frame came
+        out smaller than a 1280-wide landscape one, when it needs to be larger.
+        """
+        portrait = build_composition(
+            [Cue(0.0, 1.0, "אנכי")], duration=2.0, width=1080, height=1920
+        )
+        landscape = build_composition(
+            [Cue(0.0, 1.0, "רוחב")], duration=2.0, width=1280, height=720
+        )
+        import re
+
+        size = lambda html: int(re.search(r"font-size: (\d+)px", html).group(1))
+        assert size(portrait) > size(landscape)
+
+    def test_portrait_lifts_the_captions_clear_of_app_furniture(self):
+        portrait = build_composition(
+            [Cue(0.0, 1.0, "אנכי")], duration=2.0, width=1080, height=1920
+        )
+        import re
+
+        bottom = int(re.search(r"bottom: (\d+)px", portrait).group(1))
+        assert bottom == round(1920 * 0.18)
 
 
 class TestRenderPaths:
