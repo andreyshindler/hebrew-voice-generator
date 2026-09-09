@@ -66,6 +66,25 @@ $DOCKER info >/dev/null 2>&1 || die \
 # ---------------------------------------------------------------- fetch code
 
 if [ "$PULL" -eq 1 ]; then
+    # `git reset --hard origin/main` on a checkout that is deliberately on a
+    # branch silently drags it back to main, keeping the branch *name* - so
+    # everything afterwards builds and deploys main while looking like the
+    # branch. Refuse unless the caller said which branch they meant.
+    current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    if [ -z "${HV_DEPLOY_BRANCH+set}" ] \
+       && [ -n "$current_branch" ] && [ "$current_branch" != "HEAD" ] \
+       && [ "$current_branch" != "$BRANCH" ]; then
+        die "this checkout is on '$current_branch' but the deploy defaults to '$BRANCH'.
+
+       Resetting would move it to $BRANCH while leaving the branch name in
+       place, and every step after that would build $BRANCH.
+
+       Deploy the branch:   HV_DEPLOY_BRANCH=$current_branch $0
+       Deploy $BRANCH anyway:   HV_DEPLOY_BRANCH=$BRANCH $0
+       Build what is here:  $0 --no-pull
+
+       Nothing has been changed."
+    fi
     before="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     log "Fetching origin/$BRANCH"
     git fetch --prune origin "$BRANCH"

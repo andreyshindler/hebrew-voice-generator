@@ -117,13 +117,16 @@ leading spaces.
 `deploy.sh` now refuses to start when a name belongs to another stack, and says
 which keys are missing, but this check costs nothing and catches it earlier.
 
-> **If you already hit the collision:** the build overwrote
-> `hebrew-voice:latest` with branch code. Production keeps running — a
-> container holds an image *ID*, not a tag, so nothing changed under it, and
-> `restart: unless-stopped` reuses that ID. But the tag is now wrong, so don't
-> run a bare `docker compose up -d` in the production checkout, which would
-> recreate it from the branch image. Re-running `./deploy/deploy.sh` there
-> rebuilds from `main` and puts the tag back.
+> **If you already hit the collision:** the build got as far as writing
+> `hebrew-voice:latest` before the container name failed, so that tag now holds
+> whatever this checkout was on at the time — which, if `deploy.sh` had already
+> reset it, is `main`, the same code production runs.
+>
+> Production keeps running either way: a container holds an image *ID*, not a
+> tag, so nothing changes under it and `restart: unless-stopped` reuses that
+> ID. If you want certainty rather than reasoning, run `./deploy/deploy.sh` in
+> the production checkout; it rebuilds from `main` and the tag is correct by
+> construction.
 
 ## 4. Deploy it
 
@@ -135,6 +138,16 @@ HV_DEPLOY_BRANCH=claude/hyperframes-video-render ./deploy/deploy.sh
 The same script production uses. It resets to the named branch, backs up *this
 stack's* database, rebuilds, and waits for health. The lock file is derived
 from the checkout path, so this never blocks a production deploy.
+
+**`HV_DEPLOY_BRANCH` is not optional here.** Without it the script defaults to
+`main` and `git reset --hard origin/main` drags the checkout back, keeping the
+branch *name* while replacing its contents — after which everything builds and
+deploys `main` while looking like the branch. That is a genuinely confusing
+half-hour, so the script now refuses to run when the checkout is on a branch
+other than the one being deployed and nothing said which was meant.
+
+Run it from the repository root, not from `deploy/`. Compose finds the file
+either way by walking up, but it is one less thing to be unsure about.
 
 To move the instance to a different branch later, just change
 `HV_DEPLOY_BRANCH`.
