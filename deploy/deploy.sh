@@ -136,7 +136,7 @@ if compose ps --services 2>/dev/null | grep -qx "$RENDER_SERVICE"; then
     render_ok=0
     while [ "$SECONDS" -lt "$deadline" ]; do
         if compose exec -T "$RENDER_SERVICE" node -e \
-            "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+            "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
             2>/dev/null
         then
             render_ok=1

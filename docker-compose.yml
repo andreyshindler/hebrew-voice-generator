@@ -67,14 +67,14 @@ services:
 
     # The same artifacts volume the app uses: the app writes the composition
     # and the renderer writes the video back, so neither has to stream a large
-    # file over HTTP. Both see it at /data, which is what keeps the paths in a
-    # RenderConfig valid on both sides.
+    # file over HTTP. Both see it at /data, which is what makes the paths in a
+    # render request mean the same thing on both sides.
     volumes:
       - hebrew-voice-data:/data
 
     healthcheck:
       test: ["CMD", "node", "-e",
-             "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+             "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3

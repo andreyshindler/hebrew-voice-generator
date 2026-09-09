@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 import aiohttp
@@ -42,19 +42,24 @@ def _composition_rel(video_rel: str) -> str:
 
 
 async def _post_render(settings: Settings, payload: dict) -> None:
-    """Ask the sidecar to render, and raise with its message if it refuses."""
+    """Ask the sidecar to render, and raise with its message if it refuses.
+
+    The payload shape is @hyperframes/producer's own ``POST /render`` body,
+    taken from the package rather than from the documentation site, which
+    describes a flatter ``{inputPath, width, height}`` request the code does
+    not accept.
+    """
     timeout = aiohttp.ClientTimeout(total=settings.render_timeout)
     url = f"{settings.render_url}/render"
     try:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json=payload) as response:
-                body = (await response.text())[:500]
-                if response.status >= 400:
-                    raise RenderError(f"renderer returned {response.status}: {body}")
+                body = await response.json(content_type=None)
+                if response.status >= 400 or not (body or {}).get("success", True):
+                    detail = (body or {}).get("error") or f"HTTP {response.status}"
+                    raise RenderError(f"renderer failed: {str(detail)[:300]}")
     except asyncio.TimeoutError as exc:
-        raise RenderError(
-            f"render exceeded {settings.render_timeout:.0f}s"
-        ) from exc
+        raise RenderError(f"render exceeded {settings.render_timeout:.0f}s") from exc
     except aiohttp.ClientError as exc:
         # Almost always the sidecar being down or unreachable, which is an
         # operational problem rather than anything the user did.
@@ -121,16 +126,23 @@ async def render_once(settings: Settings, render: Render) -> None:
             )
 
         renderer_root = settings.renderer_data_dir
+        composition = PurePosixPath(composition_rel)
         await _post_render(
             settings,
             {
-                "inputPath": str(renderer_root / composition_rel),
+                # A real directory on the shared volume plus a name inside it,
+                # which is what lets the composition load its audio as a plain
+                # relative filename.
+                "projectDir": str(renderer_root / composition.parent),
+                "entryFile": composition.name,
                 "outputPath": str(renderer_root / video_rel),
-                "width": render.width,
-                "height": render.height,
                 "fps": render.fps,
                 "quality": settings.render_quality,
                 "format": render.format,
+                # Frame size comes from the composition's own data-width and
+                # data-height, so it is not repeated here.
+                "gpu": False,
+                "debug": False,
             },
         )
 

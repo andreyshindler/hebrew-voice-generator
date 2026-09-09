@@ -2,6 +2,8 @@
   "name": "hebrew-voice-renderer",
   "private": true,
   "version": "0.1.0",
+  "//": "@hyperframes/producer is ESM-only - it publishes no CommonJS entry - so this package must be a module too.",
+  "type": "module",
   "description": "HyperFrames render sidecar for the Hebrew voice generator",
   "license": "MIT",
   "dependencies": {

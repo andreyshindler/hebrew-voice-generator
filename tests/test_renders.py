@@ -389,6 +389,50 @@ class TestRenderPipeline:
 
 
 @pytest.mark.anyio
+class TestRendererContract:
+    """What we actually send @hyperframes/producer's POST /render.
+
+    Its documentation site describes a flat {inputPath, width, height} body the
+    code does not accept - the real one takes a project directory plus an entry
+    file. This pins the shape so a passing fake cannot hide a wrong request.
+    """
+
+    async def test_the_payload_matches_the_producer_api(
+        self, render_client, render_settings, fake_tts, monkeypatch
+    ):
+        seen = {}
+
+        async def capture(settings, payload):
+            seen.update(payload)
+            target = settings.data_dir / payload["outputPath"].removeprefix(
+                str(settings.renderer_data_dir) + "/"
+            )
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(FAKE_VIDEO)
+
+        monkeypatch.setattr(rendering, "_post_render", capture)
+        generation = make_generation(render_client)
+        render_client.post(
+            f"/api/generations/{generation['id']}/renders",
+            json={"format": "mp4"}, headers=csrf(render_client),
+        )
+        await drain(render_settings)
+
+        assert set(seen) >= {
+            "projectDir", "entryFile", "outputPath", "fps", "quality", "format"
+        }
+        # The flat shape from the docs would be silently ignored by the server.
+        assert "inputPath" not in seen and "width" not in seen
+        assert seen["quality"] in ("draft", "standard", "high")
+        assert seen["fps"] in (24, 30, 60)
+        assert seen["entryFile"].endswith(".render.html")
+        # projectDir must be a real directory and entryFile a name inside it,
+        # or the renderer rejects the request outright.
+        assert "/" not in seen["entryFile"]
+        assert seen["outputPath"].startswith(seen["projectDir"] + "/")
+
+
+@pytest.mark.anyio
 class TestRenderWorker:
     """The loop itself, which the API tests deliberately stub out."""
 
