@@ -151,6 +151,37 @@ MIGRATIONS: List[Tuple[int, str]] = [
         ALTER TABLE usage_daily ADD COLUMN renders INTEGER NOT NULL DEFAULT 0;
         """,
     ),
+    (
+        5,
+        # Uploaded photos and clips, to composite behind the captions.
+        #
+        # Owned by the user rather than by a recording: the same footage is
+        # reasonably used across several, and it is uploaded before anyone has
+        # decided which recording it belongs to.
+        #
+        # duration_ms is what the browser measured, not what we probed - the
+        # app image has no media tools - so it is layout advice and nothing
+        # more. It is never trusted for anything that matters.
+        """
+        CREATE TABLE media (
+            id            TEXT    PRIMARY KEY,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at    INTEGER NOT NULL,
+            kind          TEXT    NOT NULL,
+            mime          TEXT    NOT NULL,
+            rel           TEXT    NOT NULL,
+            bytes         INTEGER NOT NULL DEFAULT 0,
+            duration_ms   INTEGER NOT NULL DEFAULT 0,
+            original_name TEXT    NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_media_user_time ON media(user_id, created_at DESC);
+
+        -- The ordered ids this render composited, as JSON. Renders are
+        -- immutable once made, so there is nothing to join and nothing to keep
+        -- in step - and it doubles as part of the dedupe key.
+        ALTER TABLE renders ADD COLUMN media_ids TEXT NOT NULL DEFAULT '[]';
+        """,
+    ),
 ]
 
 

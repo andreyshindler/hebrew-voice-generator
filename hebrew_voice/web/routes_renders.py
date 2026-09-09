@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import time
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request
 from fastapi.responses import FileResponse
@@ -42,6 +43,33 @@ class RenderRequest(BaseModel):
     #: Frame shape by name. An overlay has to match the footage it goes over,
     #: so this matters more than it looks. Defaults to the server's setting.
     size: Optional[str] = Field(default=None)
+    #: Uploaded photos and clips to show behind the captions, in running
+    #: order. Empty means captions over a plain background, as before.
+    media_ids: List[str] = Field(default_factory=list)
+
+
+async def _checked_media(settings: Settings, user: User, media_ids: List[str]) -> List[str]:
+    """Validate the requested uploads and return them in running order.
+
+    Every id has to resolve to a file this account owns. Silently dropping a
+    stranger's id would render a video quietly missing a shot, and accepting it
+    would show one account another's photos.
+    """
+    if not media_ids:
+        return []
+    if len(media_ids) > settings.max_media_per_render:
+        raise UnprocessableEntity(
+            f"At most {settings.max_media_per_render} files can be used in one video",
+            code="too_much_media",
+        )
+    found = await run_in_threadpool(
+        repo.get_media_many, settings.db_path, media_ids, user.id
+    )
+    if len(found) != len(media_ids):
+        raise UnprocessableEntity(
+            "One of those files no longer exists", code="media_unavailable"
+        )
+    return [item.id for item in found]
 
 
 def _require_rendering(settings: Settings) -> None:
@@ -94,6 +122,8 @@ async def request_render(
         )
     width, height = RENDER_SIZES[size]
 
+    media_ids = await _checked_media(settings, user, payload.media_ids)
+
     words = payload.words_per_cue or generation.words_per_cue
     existing = await run_in_threadpool(
         repo.find_reusable_render,
@@ -104,6 +134,7 @@ async def request_render(
         width=width,
         height=height,
         fps=settings.render_fps,
+        media_ids=json.dumps(media_ids),
     )
     if existing is not None:
         # Byte-identical output; charging for it again would be theft of quota.
@@ -149,6 +180,7 @@ async def request_render(
         width=width,
         height=height,
         fps=settings.render_fps,
+        media_ids=tuple(media_ids),
     )
     await run_in_threadpool(repo.insert_render, settings.db_path, render)
 

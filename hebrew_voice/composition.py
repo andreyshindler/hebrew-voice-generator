@@ -12,13 +12,14 @@ files to package and the Docker build cannot miss one.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import List, Sequence
 
 from jinja2 import Template
 
 from .synth import Cue
 
-__all__ = ["build_composition", "COMPOSITION_FILENAME_SUFFIX"]
+__all__ = ["build_composition", "plan_shots", "Shot", "COMPOSITION_FILENAME_SUFFIX"]
 
 COMPOSITION_FILENAME_SUFFIX = ".render.html"
 
@@ -47,6 +48,16 @@ _TEMPLATE = Template(
     display: flex;
     align-items: {{ "center" if transparent else "flex-end" }};
     justify-content: center;
+  }
+  /* Uploaded photos and clips, behind the captions. `cover` is what makes a
+     landscape photo usable in a 9:16 frame: it fills the frame and crops,
+     rather than letterboxing. */
+  .shot {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
   .cue {
     position: absolute;
@@ -79,6 +90,17 @@ _TEMPLATE = Template(
 {%- if audio_src %}
   <audio data-start="0" data-duration="{{ '%.3f' | format(duration) }}" src="{{ audio_src }}"></audio>
 {%- endif %}
+{%- for shot in shots %}
+{%- if shot.kind == "video" %}
+  {# muted on purpose: the clip's own sound would fight the narration, and
+     mixing two tracks is a decision the user has not been asked to make. #}
+  <video class="shot" muted data-start="{{ '%.3f' | format(shot.start) }}" \
+data-duration="{{ '%.3f' | format(shot.duration) }}" src="{{ shot.src }}"></video>
+{%- else %}
+  <img class="shot" data-start="{{ '%.3f' | format(shot.start) }}" \
+data-duration="{{ '%.3f' | format(shot.duration) }}" src="{{ shot.src }}" alt="">
+{%- endif %}
+{%- endfor %}
 {%- for cue in cues %}
   <div class="cue" data-start="{{ '%.3f' | format(cue.start) }}" \
 data-duration="{{ '%.3f' | format(cue.duration) }}">{{ cue.text }}</div>
@@ -118,6 +140,38 @@ def _metrics(width: int, height: int) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class Shot:
+    """One uploaded photo or clip, and the slot it occupies."""
+
+    kind: str
+    src: str
+    start: float
+    duration: float
+
+
+def plan_shots(media: Sequence[tuple], duration: float) -> List[Shot]:
+    """Give each upload an equal share of the voiceover, in order.
+
+    ``media`` is (kind, src) pairs. The last slot absorbs the rounding so the
+    shots always reach exactly the end of the audio - a hundredth of a second
+    of black at the tail is small but visible, and free to avoid.
+
+    A clip shorter than its slot leaves the last frame on screen rather than a
+    gap: we cannot measure clip lengths in this image, so the layout cannot
+    depend on knowing them.
+    """
+    if not media or duration <= 0:
+        return []
+    slot = duration / len(media)
+    shots: List[Shot] = []
+    for index, (kind, src) in enumerate(media):
+        start = index * slot
+        end = duration if index == len(media) - 1 else start + slot
+        shots.append(Shot(kind=kind, src=src, start=start, duration=end - start))
+    return shots
+
+
 def build_composition(
     cues: Sequence[Cue],
     *,
@@ -126,6 +180,7 @@ def build_composition(
     height: int,
     audio_src: str = "",
     transparent: bool = False,
+    shots: Sequence[Shot] = (),
 ) -> str:
     """Render the composition HTML for one video.
 
@@ -148,6 +203,7 @@ def build_composition(
 
     return _TEMPLATE.render(
         cues=clamped,
+        shots=shots,
         duration=max(duration, 0.1),
         width=width,
         height=height,

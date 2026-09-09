@@ -14,15 +14,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Optional
 
 import aiohttp
 from starlette.concurrency import run_in_threadpool
 
 from .. import repo, storage
-from ..composition import COMPOSITION_FILENAME_SUFFIX, build_composition
+from ..composition import build_composition, plan_shots
 from ..config import Settings
+from ..errors import NotFound
 from ..models import Render
 from ..quota import quota_day
 from ..synth import group_cues, load_cues
@@ -34,11 +35,6 @@ __all__ = ["RenderWorker", "render_once", "RenderError"]
 
 class RenderError(Exception):
     """A render failed for a reason worth showing the user."""
-
-
-def _composition_rel(video_rel: str) -> str:
-    """The composition HTML lives beside its video and is deleted after."""
-    return video_rel.rsplit(".", 1)[0] + COMPOSITION_FILENAME_SUFFIX
 
 
 def _explain(detail: str) -> str:
@@ -83,9 +79,16 @@ async def _post_render(settings: Settings, payload: dict) -> None:
 
 
 def _prepare(settings: Settings, render: Render) -> tuple[str, str, float]:
-    """Write the composition. Returns (composition_rel, video_rel, duration).
+    """Assemble the render's work directory.
 
-    Synchronous - the caller runs it in a thread, like the other file work.
+    Returns (workdir_rel, video_rel, duration). Synchronous - the caller runs
+    it in a thread, like the other file work.
+
+    Everything the renderer reads goes in one directory: the composition as
+    ``index.html``, the audio, and one entry per upload. The renderer serves
+    files from the directory it is given, so a composition referencing the
+    media where it actually lives would be reaching outside that root. Links
+    rather than copies, so a 200MB clip costs nothing to stage.
     """
     generation = repo.get_generation(settings.db_path, render.generation_id, render.user_id)
     if generation is None:
@@ -101,23 +104,45 @@ def _prepare(settings: Settings, render: Render) -> tuple[str, str, float]:
     grouped = group_cues(word_cues, words_per_cue=render.words_per_cue)
 
     video_rel = storage.render_relative_path(generation.audio_rel, render.id, render.format)
-    composition_rel = _composition_rel(video_rel)
+    workdir_rel = storage.render_workdir(render.id)
+    workdir = settings.data_dir / workdir_rel
+    workdir.mkdir(parents=True, exist_ok=True)
 
     transparent = render.format != "mp4"
+    audio_name = ""
+    if not transparent:
+        audio_name = "audio" + Path(generation.audio_rel).suffix
+        storage.link_or_copy(
+            storage.resolve_under(settings.data_dir, generation.audio_rel),
+            workdir / audio_name,
+        )
+
+    # Staged in the order the user arranged them; anything since deleted is
+    # simply absent, and the remaining shots divide the time between them.
+    staged = []
+    for index, item in enumerate(
+        repo.get_media_many(settings.db_path, list(render.media_ids), render.user_id)
+    ):
+        name = f"shot{index}{Path(item.rel).suffix}"
+        try:
+            storage.link_or_copy(
+                storage.resolve_under(settings.data_dir, item.rel), workdir / name
+            )
+        except NotFound:
+            continue
+        staged.append((item.kind, name))
+
     html = build_composition(
         grouped,
         duration=generation.duration,
         width=render.width,
         height=render.height,
-        # Resolved by the browser relative to the composition file, so both
-        # containers agree on it without sharing an absolute path.
-        audio_src="" if transparent else Path(generation.audio_rel).name,
+        audio_src=audio_name,
         transparent=transparent,
+        shots=plan_shots(staged, generation.duration),
     )
-    target = settings.data_dir / composition_rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(html, encoding="utf-8")
-    return composition_rel, video_rel, generation.duration
+    (workdir / "index.html").write_text(html, encoding="utf-8")
+    return workdir_rel, video_rel, generation.duration
 
 
 def _cleanup(settings: Settings, *relatives: Optional[str]) -> None:
@@ -130,10 +155,10 @@ async def render_once(settings: Settings, render: Render) -> None:
     Never raises: a render that blows up has to leave the row in a terminal
     state, or the client polls a job that will never move again.
     """
-    composition_rel: Optional[str] = None
+    workdir_rel: Optional[str] = None
     video_rel: Optional[str] = None
     try:
-        composition_rel, video_rel, duration = await run_in_threadpool(
+        workdir_rel, video_rel, duration = await run_in_threadpool(
             _prepare, settings, render
         )
         if duration > settings.max_render_seconds:
@@ -142,15 +167,13 @@ async def render_once(settings: Settings, render: Render) -> None:
             )
 
         renderer_root = settings.renderer_data_dir
-        composition = PurePosixPath(composition_rel)
         await _post_render(
             settings,
             {
-                # A real directory on the shared volume plus a name inside it,
-                # which is what lets the composition load its audio as a plain
-                # relative filename.
-                "projectDir": str(renderer_root / composition.parent),
-                "entryFile": composition.name,
+                # One directory holding the composition, the audio and every
+                # upload, which is what lets them all be plain relative names.
+                "projectDir": str(renderer_root / workdir_rel),
+                "entryFile": "index.html",
                 "outputPath": str(renderer_root / video_rel),
                 "fps": render.fps,
                 "quality": settings.render_quality,
@@ -189,8 +212,10 @@ async def render_once(settings: Settings, render: Render) -> None:
         )
         await run_in_threadpool(_cleanup, settings, video_rel)
     finally:
-        # The composition is scaffolding; it is never served and never kept.
-        await run_in_threadpool(_cleanup, settings, composition_rel)
+        # The work directory is scaffolding: links and one HTML file, never
+        # served and never kept, however the render ended.
+        if workdir_rel:
+            await run_in_threadpool(storage.remove_tree, settings.data_dir, workdir_rel)
 
 
 class RenderWorker:

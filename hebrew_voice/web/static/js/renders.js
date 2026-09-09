@@ -28,7 +28,10 @@ const LABELS = {
 };
 
 export class Renders {
-  constructor({ enabled, maxSeconds }) {
+  constructor({ enabled, maxSeconds, media }) {
+    /* Ordered uploads to composite behind the captions. Optional so the render
+       panel still works on a page without the strip. */
+    this.media = media || { ids: () => [] };
     this.enabled = Boolean(enabled);
     this.maxSeconds = maxSeconds || 0;
     this.box = $("#render-box");
@@ -85,17 +88,24 @@ export class Renders {
         return;
       }
       const [width, height] = SIZES[this.size.value] || [];
+      const wanted = this.media.ids().join(",");
       const done = items.find(
         (r) =>
           r.status === "done" &&
           r.format === this.format.value &&
           r.width === width &&
-          r.height === height
+          r.height === height &&
+          (r.media_ids || []).join(",") === wanted
       );
       if (done) this._offer(done);
     } catch (error) {
       /* Not worth a toast: the panel simply starts empty and the button works. */
     }
+  }
+
+  /** Re-check what exists for the current selection. */
+  refresh() {
+    if (this.enabled && this.current) this._reset();
   }
 
   _reset() {
@@ -116,6 +126,7 @@ export class Renders {
       const render = await api.requestRender(this.current.id, {
         format: this.format.value,
         size: this.size.value,
+        media_ids: this.media.ids(),
       });
       if (render.status === "done") {
         // An identical render already existed, so there is nothing to wait for.

@@ -41,9 +41,10 @@ it on a VPS and hand the URL to other people.
   server-wide concurrency cap, and automatic retention cleanup.
 - **A CLI** for scripting and for smoke-testing a fresh install.
 
-Four runtime dependencies: `edge-tts`, `fastapi`, `uvicorn`, `jinja2`. Passwords use
-stdlib `hashlib.scrypt` and storage uses stdlib `sqlite3`, so there's no ORM, no
-password library, and nothing that needs a compiler.
+Five runtime dependencies, all pure Python: `edge-tts`, `fastapi`, `uvicorn`, `jinja2`,
+and `python-multipart` for uploads. Passwords use stdlib `hashlib.scrypt` and storage uses
+stdlib `sqlite3`, so there's no ORM, no password library, and nothing that needs a
+compiler.
 
 ---
 
@@ -222,6 +223,31 @@ knowing:
 
 Recordings made before per-word timings existed can't be rendered, the same limit the density
 control has.
+
+### Your own photos and clips
+
+Upload images and video and they play behind the captions, in the order shown under the
+button. The voiceover's length is split evenly between them: three photos over a nine-second
+recording get three seconds each. Everything is scaled to `cover`, so a landscape photo fills
+a 9:16 frame by cropping rather than letterboxing.
+
+Uploaded video is **muted** — its own audio would fight the narration, and mixing two tracks
+is a decision the app doesn't make for you.
+
+Two things worth knowing:
+
+- **The type comes from the file's first bytes**, never its name or the browser's
+  `Content-Type`. A `.jpg` full of MP4 is stored and served as an MP4; anything that isn't a
+  JPEG, PNG, GIF, WebP, MP4, WebM or MOV is refused outright rather than stored and hoped
+  about.
+- **Clip lengths are measured in the browser**, because this image has no media tools. That
+  number only ever influences layout — a clip shorter than its slot leaves its last frame up
+  rather than cutting to black — and is never trusted for anything that matters.
+
+Storage is capped per account (`HV_MEDIA_QUOTA_BYTES`, 512 MB) because the renderer reads
+these files off the same disk everything else lives on. Each render stages its inputs into a
+scratch directory using hard links, so a 200 MB clip costs nothing to prepare and the
+directory is removed however the render ends.
 
 ---
 

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from hebrew_voice import repo, synth
 from hebrew_voice.mailer import SmtpMailer
 from hebrew_voice.config import Settings
+from hebrew_voice.web import rendering
 from hebrew_voice.web.app import create_app
 
 from . import fakes
@@ -135,3 +136,61 @@ def register_verified(client, settings, email: str = EMAIL, password: str = PASS
 def csrf(client: TestClient) -> dict:
     """The header every unsafe API call needs."""
     return {"X-CSRF-Token": client.cookies.get("hv_csrf", "")}
+
+
+# --------------------------------------------------------------------------
+# Video rendering
+# --------------------------------------------------------------------------
+
+FAKE_VIDEO = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64
+
+
+@pytest.fixture
+def render_settings(settings) -> Settings:
+    """Settings with a renderer configured, but no worker running."""
+    return Settings(
+        **{
+            **settings.__dict__,
+            "render_url": "http://renderer:8080",
+            "daily_render_quota": 3,
+            "max_render_seconds": 300.0,
+            "render_size": "landscape",
+        }
+    )
+
+
+@pytest.fixture
+def render_app(render_settings):
+    application = create_app(render_settings)
+    application.state.mailer = fakes.RecordingMailer()
+    return application
+
+
+@pytest.fixture
+def render_client(render_app, render_settings, monkeypatch):
+    """A logged-in client whose renderer writes a file instead of encoding one.
+
+    The app's own worker is stubbed out: it would otherwise claim queued rows
+    from its own event loop and race whatever the test is asserting. Tests
+    drive the queue explicitly with :func:`drain`, and the worker loop itself
+    is covered separately in :class:`TestRenderWorker`.
+    """
+
+    async def fake_post(settings, payload):
+        target = settings.data_dir / payload["outputPath"].removeprefix(
+            str(settings.renderer_data_dir) + "/"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(FAKE_VIDEO)
+
+    async def no_worker(self):
+        return None
+
+    monkeypatch.setattr(rendering, "_post_render", fake_post)
+    monkeypatch.setattr(rendering.RenderWorker, "start", no_worker)
+    monkeypatch.setattr(rendering.RenderWorker, "stop", no_worker)
+    with TestClient(render_app) as client:
+        register_verified(client, render_settings)
+        yield client
+
+

@@ -149,6 +149,15 @@ class Settings:
     #: How often the worker looks for queued jobs.
     render_poll_seconds: float = 2.0
 
+    # Uploaded photos and clips, composited behind the captions.
+    #: Largest single upload. Video reaches this far faster than photos do.
+    max_upload_bytes: int = 64 * 1024 * 1024
+    #: Total an account may keep. The renderer needs the files on disk, so
+    #: this is the real limit on what video costs the box.
+    media_quota_bytes: int = 512 * 1024 * 1024
+    #: Most clips in one video, to bound the composition and the render.
+    max_media_per_render: int = 20
+
     # Retention
     history_keep: int = 50
     history_max_age_days: int = 30
@@ -300,6 +309,9 @@ class Settings:
             render_fps=_int(env, "HV_RENDER_FPS", 30),
             render_quality=(env.get("HV_RENDER_QUALITY") or "standard").lower(),
             render_poll_seconds=_float(env, "HV_RENDER_POLL_SECONDS", 2.0),
+            max_upload_bytes=_int(env, "HV_MAX_UPLOAD_BYTES", 64 * 1024 * 1024),
+            media_quota_bytes=_int(env, "HV_MEDIA_QUOTA_BYTES", 512 * 1024 * 1024),
+            max_media_per_render=_int(env, "HV_MAX_MEDIA_PER_RENDER", 20),
             history_keep=_int(env, "HV_HISTORY_KEEP", 50),
             history_max_age_days=_int(env, "HV_HISTORY_MAX_AGE_DAYS", 30),
             cleanup_interval_min=_int(env, "HV_CLEANUP_INTERVAL_MIN", 60),

@@ -20,59 +20,7 @@ from hebrew_voice.web import rendering
 from hebrew_voice.web.app import create_app
 
 from . import fakes
-from .conftest import INVITE, csrf, register_verified
-
-FAKE_VIDEO = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 64
-
-
-@pytest.fixture
-def render_settings(settings) -> Settings:
-    """Settings with a renderer configured, but no worker running."""
-    return Settings(
-        **{
-            **settings.__dict__,
-            "render_url": "http://renderer:8080",
-            "daily_render_quota": 3,
-            "max_render_seconds": 300.0,
-            "render_size": "landscape",
-        }
-    )
-
-
-@pytest.fixture
-def render_app(render_settings):
-    application = create_app(render_settings)
-    application.state.mailer = fakes.RecordingMailer()
-    return application
-
-
-@pytest.fixture
-def render_client(render_app, render_settings, monkeypatch):
-    """A logged-in client whose renderer writes a file instead of encoding one.
-
-    The app's own worker is stubbed out: it would otherwise claim queued rows
-    from its own event loop and race whatever the test is asserting. Tests
-    drive the queue explicitly with :func:`drain`, and the worker loop itself
-    is covered separately in :class:`TestRenderWorker`.
-    """
-
-    async def fake_post(settings, payload):
-        target = settings.data_dir / payload["outputPath"].removeprefix(
-            str(settings.renderer_data_dir) + "/"
-        )
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(FAKE_VIDEO)
-
-    async def no_worker(self):
-        return None
-
-    monkeypatch.setattr(rendering, "_post_render", fake_post)
-    monkeypatch.setattr(rendering.RenderWorker, "start", no_worker)
-    monkeypatch.setattr(rendering.RenderWorker, "stop", no_worker)
-    with TestClient(render_app) as client:
-        register_verified(client, render_settings)
-        yield client
-
+from .conftest import FAKE_VIDEO, INVITE, csrf, register_verified
 
 def make_generation(client, text="שלום עולם ומה שלומך היום"):
     response = client.post("/api/synthesize", json={"text": text}, headers=csrf(client))
@@ -480,11 +428,14 @@ class TestRendererContract:
         assert "inputPath" not in seen and "width" not in seen
         assert seen["quality"] in ("draft", "standard", "high")
         assert seen["fps"] in (24, 30, 60)
-        assert seen["entryFile"].endswith(".render.html")
-        # projectDir must be a real directory and entryFile a name inside it,
-        # or the renderer rejects the request outright.
+        # projectDir must be a real directory and entryFile a plain name inside
+        # it, or the renderer rejects the request outright.
+        assert seen["entryFile"] == "index.html"
         assert "/" not in seen["entryFile"]
-        assert seen["outputPath"].startswith(seen["projectDir"] + "/")
+        # The work directory holds only this render's inputs. The finished
+        # video is written outside it, since the directory is deleted after.
+        assert "/work/" in seen["projectDir"]
+        assert not seen["outputPath"].startswith(seen["projectDir"] + "/")
 
 
 @pytest.mark.anyio

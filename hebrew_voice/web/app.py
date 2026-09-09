@@ -20,7 +20,14 @@ from .. import cleanup, db, storage
 from ..mailer import mailer_from_settings
 from ..config import Settings, get_settings as load_settings
 from ..errors import AppError, Unauthorized
-from . import routes_auth, routes_history, routes_pages, routes_renders, routes_synth
+from . import (
+    routes_auth,
+    routes_history,
+    routes_media,
+    routes_pages,
+    routes_renders,
+    routes_synth,
+)
 from .rendering import RenderWorker
 from .runner import SynthRunner
 
@@ -96,6 +103,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(routes_synth.router)
     app.include_router(routes_history.router)
     app.include_router(routes_renders.router)
+    app.include_router(routes_media.router)
 
     _install_middleware(app, settings)
     _install_error_handlers(app, settings)

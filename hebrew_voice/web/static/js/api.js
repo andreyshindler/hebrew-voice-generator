@@ -45,6 +45,12 @@ const MESSAGES = {
   synthesis_timeout: "היצירה ארכה יותר מדי. נסו טקסט קצר יותר",
   tts_upstream_failed: "שירות ההקראה אינו זמין כרגע. נסו שוב בעוד רגע",
   not_found: "הפריט לא נמצא",
+  upload_too_large: "הקובץ גדול מדי",
+  unsupported_media: "אפשר להעלות תמונות (JPEG, PNG, GIF, WebP) וסרטונים (MP4, WebM, MOV) בלבד",
+  media_quota_exceeded: "נגמר שטח האחסון. מחקו קבצים ונסו שוב",
+  media_unavailable: "אחד הקבצים כבר לא קיים",
+  too_much_media: "יותר מדי קבצים לסרטון אחד",
+  empty_upload: "הקובץ ריק",
   rendering_disabled: "יצירת וידאו אינה זמינה בשרת הזה",
   render_quota_exceeded: "נגמרה מכסת הווידאו היומית. היא מתאפסת בחצות",
   already_rendering: "כבר רץ וידאו להקלטה הזו. המתינו שיסתיים",
@@ -106,6 +112,33 @@ export async function request(path, { method = "GET", body, signal } = {}) {
   return payload;
 }
 
+/* Multipart, so it cannot go through `request` - that one JSON-encodes its
+   body, and the browser has to set the multipart boundary itself. Deliberately
+   no Content-Type header here for the same reason. */
+async function upload(path, file, duration) {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("duration", String(duration || 0));
+
+  const response = await fetch(url(path), {
+    method: "POST",
+    headers: { Accept: "application/json", "X-CSRF-Token": readCookie("hv_csrf") },
+    credentials: "same-origin",
+    body: form,
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = (payload && payload.error) || {};
+    throw new ApiError(
+      error.code || `http_${response.status}`,
+      messageFor(error.code, error.message),
+      error.detail,
+      response.status
+    );
+  }
+  return payload;
+}
+
 export const api = {
   me: () => request("/api/auth/me"),
   login: (email, password) =>
@@ -126,6 +159,9 @@ export const api = {
   },
   generation: (id) => request(`/api/generations/${id}`),
   remove: (id) => request(`/api/generations/${id}`, { method: "DELETE" }),
+  media: () => request("/api/media"),
+  uploadMedia: (file, duration) => upload("/api/media", file, duration),
+  removeMedia: (id) => request(`/api/media/${id}`, { method: "DELETE" }),
   requestRender: (id, body) =>
     request(`/api/generations/${id}/renders`, { method: "POST", body }),
   renders: (id) => request(`/api/generations/${id}/renders`),

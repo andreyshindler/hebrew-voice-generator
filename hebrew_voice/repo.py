@@ -6,13 +6,14 @@ connection, so there is no shared state and no thread affinity to worry about.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from .db import connect, transaction
-from .models import Generation, Render, Session, User
+from .models import Generation, Media, Render, Session, User
 
 __all__ = [
     "create_user",
@@ -55,6 +56,13 @@ __all__ = [
     "reserve_render_quota",
     "refund_render_quota",
     "renders_today",
+    "insert_media",
+    "get_media",
+    "get_media_many",
+    "list_media",
+    "delete_media",
+    "media_bytes_used",
+    "media_paths_for_user",
 ]
 
 
@@ -425,14 +433,15 @@ def insert_render(db: Path, render: Render) -> None:
             INSERT INTO renders
                 (id, generation_id, user_id, created_at, started_at, finished_at,
                  status, error, format, words_per_cue, width, height, fps,
-                 video_rel, video_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 video_rel, video_bytes, media_ids)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 render.id, render.generation_id, render.user_id, render.created_at,
                 render.started_at, render.finished_at, render.status, render.error,
                 render.format, render.words_per_cue, render.width, render.height,
                 render.fps, render.video_rel, render.video_bytes,
+                json.dumps(list(render.media_ids)),
             ),
         )
 
@@ -477,7 +486,15 @@ def render_video_paths(db: Path, gen_ids: Sequence[str]) -> List[str]:
 
 
 def find_reusable_render(
-    db: Path, gen_id: str, *, fmt: str, words_per_cue: int, width: int, height: int, fps: int
+    db: Path,
+    gen_id: str,
+    *,
+    fmt: str,
+    words_per_cue: int,
+    width: int,
+    height: int,
+    fps: int,
+    media_ids: str = "[]",
 ) -> Optional[Render]:
     """A finished render with identical parameters, if one exists.
 
@@ -490,9 +507,10 @@ def find_reusable_render(
             SELECT * FROM renders
              WHERE generation_id = ? AND status = 'done' AND video_rel IS NOT NULL
                AND format = ? AND words_per_cue = ? AND width = ? AND height = ? AND fps = ?
+               AND media_ids = ?
              ORDER BY created_at DESC LIMIT 1
             """,
-            (gen_id, fmt, words_per_cue, width, height, fps),
+            (gen_id, fmt, words_per_cue, width, height, fps, media_ids),
         ).fetchone()
     return Render.from_row(row) if row else None
 
@@ -558,6 +576,97 @@ def requeue_or_fail_running(db: Path, error: str) -> int:
             (int(time.time()), error),
         )
         return cur.rowcount or 0
+
+
+# --------------------------------------------------------------------------
+# Media
+# --------------------------------------------------------------------------
+
+
+def insert_media(db: Path, item: Media) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO media
+                (id, user_id, created_at, kind, mime, rel, bytes, duration_ms,
+                 original_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.id, item.user_id, item.created_at, item.kind, item.mime,
+                item.rel, item.bytes, item.duration_ms, item.original_name,
+            ),
+        )
+
+
+def get_media(db: Path, media_id: str, user_id: int) -> Optional[Media]:
+    """Fetch one upload, scoped to its owner."""
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT * FROM media WHERE id = ? AND user_id = ?", (media_id, user_id)
+        ).fetchone()
+    return Media.from_row(row) if row else None
+
+
+def get_media_many(db: Path, media_ids: Sequence[str], user_id: int) -> List[Media]:
+    """Fetch several uploads, **in the order asked for**.
+
+    Order is the whole point - it is the running order of the finished video -
+    and SQL will not preserve it, so the rows are reordered here. Ids that do
+    not exist or belong to someone else are simply absent, which the caller
+    checks by counting.
+    """
+    if not media_ids:
+        return []
+    placeholders = ",".join("?" for _ in media_ids)
+    with connect(db) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM media WHERE user_id = ? AND id IN ({placeholders})",
+            [user_id, *media_ids],
+        ).fetchall()
+    by_id = {row["id"]: Media.from_row(row) for row in rows}
+    return [by_id[mid] for mid in media_ids if mid in by_id]
+
+
+def list_media(db: Path, user_id: int, limit: int = 100) -> List[Media]:
+    with connect(db) as conn:
+        rows = conn.execute(
+            "SELECT * FROM media WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return [Media.from_row(row) for row in rows]
+
+
+def delete_media(db: Path, media_id: str, user_id: int) -> Optional[str]:
+    """Delete one upload, returning its path so the file can go too."""
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT rel FROM media WHERE id = ? AND user_id = ?", (media_id, user_id)
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "DELETE FROM media WHERE id = ? AND user_id = ?", (media_id, user_id)
+            )
+            return row[0]
+
+
+def media_bytes_used(db: Path, user_id: int) -> int:
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(bytes), 0) FROM media WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row[0] or 0
+
+
+def media_paths_for_user(db: Path, user_id: int) -> List[str]:
+    """Every stored upload path for a user, for wholesale cleanup."""
+    with connect(db) as conn:
+        rows = conn.execute(
+            "SELECT rel FROM media WHERE user_id = ?", (user_id,)
+        ).fetchall()
+    return [row[0] for row in rows]
 
 
 def expired_generations(

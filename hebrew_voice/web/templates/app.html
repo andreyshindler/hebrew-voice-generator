@@ -186,6 +186,13 @@
           </select>
           <button type="button" class="btn btn-ghost" id="render-go">צור וידאו</button>
         </div>
+        <div class="media-row">
+          <label class="btn btn-ghost btn-upload" for="media-input">הוספת תמונות וסרטונים</label>
+          <input type="file" id="media-input" accept="image/*,video/*" multiple hidden>
+          <span class="media-hint" id="media-hint"></span>
+        </div>
+        <ul class="media-strip" id="media-strip"></ul>
+
         <p class="render-note" id="render-note"></p>
         <div class="render-result" id="render-result" hidden></div>
       </div>

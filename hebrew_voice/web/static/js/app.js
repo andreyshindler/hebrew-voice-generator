@@ -5,6 +5,7 @@ import { api, url } from "./api.js";
 import { Composer } from "./composer.js";
 import { History } from "./history.js";
 import { Player } from "./player.js";
+import { MediaStrip } from "./media.js";
 import { Renders } from "./renders.js";
 import { $, formatNumber, toast } from "./ui.js";
 
@@ -15,10 +16,17 @@ const composer = new Composer({
   maxChars: bootstrap.limits.max_chars,
 });
 const player = new Player();
+const media = new MediaStrip({
+  /* A different set of shots is a different video, so anything already shown
+     for the previous set no longer describes what the button would make. */
+  onChange: () => renders.refresh(),
+});
 const renders = new Renders({
   enabled: bootstrap.rendering && bootstrap.rendering.enabled,
   maxSeconds: bootstrap.rendering && bootstrap.rendering.max_seconds,
+  media,
 });
+if (bootstrap.rendering && bootstrap.rendering.enabled) media.load();
 const history = new History({
   voices: bootstrap.voices,
   onOpen: (generation, { autoplay }) => {

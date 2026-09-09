@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 __all__ = ["User", "Session", "Generation", "UsageDay"]
 
@@ -219,6 +220,49 @@ RENDER_SIZES = {
 
 
 @dataclass(frozen=True)
+class Media:
+    """One uploaded photo or clip, to composite behind the captions."""
+
+    id: str
+    user_id: int
+    created_at: int
+    kind: str
+    mime: str
+    rel: str
+    bytes: int = 0
+    #: What the browser measured before uploading. Advice for laying the
+    #: timeline out, never a security or correctness input.
+    duration_ms: int = 0
+    original_name: str = ""
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Media":
+        return cls(
+            id=row["id"],
+            user_id=row["user_id"],
+            created_at=row["created_at"],
+            kind=row["kind"],
+            mime=row["mime"],
+            rel=row["rel"],
+            bytes=row["bytes"],
+            duration_ms=row["duration_ms"],
+            original_name=row["original_name"],
+        )
+
+    def public(self, *, base: str = "") -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "created_at": self.created_at,
+            "kind": self.kind,
+            "mime": self.mime,
+            "bytes": self.bytes,
+            "duration": self.duration_ms / 1000.0,
+            "name": self.original_name,
+            "url": f"{base}/api/media/{self.id}/file",
+        }
+
+
+@dataclass(frozen=True)
 class Render:
     """One rendered video of a generation, at one set of parameters."""
 
@@ -237,6 +281,8 @@ class Render:
     fps: int
     video_rel: Optional[str] = None
     video_bytes: int = 0
+    #: Ordered ids of the uploaded media composited behind the captions.
+    media_ids: Tuple[str, ...] = ()
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Render":
@@ -256,6 +302,7 @@ class Render:
             fps=row["fps"],
             video_rel=row["video_rel"],
             video_bytes=row["video_bytes"],
+            media_ids=tuple(json.loads(row["media_ids"] or "[]")),
         )
 
     @property
@@ -281,6 +328,7 @@ class Render:
             "height": self.height,
             "fps": self.fps,
             "video_bytes": self.video_bytes,
+            "media_ids": list(self.media_ids),
             "url": f"{base}/api/renders/{self.id}/video.{self.format}" if ready else None,
         }
 

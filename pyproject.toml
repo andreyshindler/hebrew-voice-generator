@@ -16,13 +16,16 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 
-# Four runtime dependencies. Passwords use stdlib scrypt and storage uses
-# stdlib sqlite3, so the Docker image needs no compiler.
+# Five runtime dependencies, all pure Python. Passwords use stdlib scrypt and
+# storage uses stdlib sqlite3, so the Docker image still needs no compiler.
 dependencies = [
     "edge-tts>=7.2,<8",
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "jinja2>=3.1",
+    # Multipart form parsing, for photo and clip uploads. FastAPI refuses to
+    # build an upload route without it.
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
