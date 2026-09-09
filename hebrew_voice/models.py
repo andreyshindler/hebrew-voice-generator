@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 
 __all__ = ["User", "Session", "Generation", "UsageDay"]
@@ -283,6 +283,9 @@ class Render:
     video_bytes: int = 0
     #: Ordered ids of the uploaded media composited behind the captions.
     media_ids: Tuple[str, ...] = ()
+    #: How this render is cut - per-shot durations, caption styling, motion,
+    #: music. Presentation only; nothing queries inside it.
+    plan: Dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Render":
@@ -303,6 +306,7 @@ class Render:
             video_rel=row["video_rel"],
             video_bytes=row["video_bytes"],
             media_ids=tuple(json.loads(row["media_ids"] or "[]")),
+            plan=json.loads(row["plan"] or "{}"),
         )
 
     @property
@@ -329,6 +333,7 @@ class Render:
             "fps": self.fps,
             "video_bytes": self.video_bytes,
             "media_ids": list(self.media_ids),
+            "plan": self.plan,
             "url": f"{base}/api/renders/{self.id}/video.{self.format}" if ready else None,
         }
 

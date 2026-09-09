@@ -244,6 +244,25 @@ Two things worth knowing:
   number only ever influences layout — a clip shorter than its slot leaves its last frame up
   rather than cutting to black — and is never trusted for anything that matters.
 
+### Editing
+
+Under **עריכה** in the result card:
+
+| | |
+| --- | --- |
+| **Order** | `‹` and `›` on each tile. The number under it is its place in the running order. |
+| **Length** | The slider under each tile. These are *proportions*, not seconds — a shot set to 3 against one at 1 holds three times as long, and the whole thing is scaled to fit the voiceover exactly. |
+| **Captions** | Size, position (bottom/middle/top), colour, an optional backing box, and karaoke highlighting of the word being spoken. |
+| **Motion** | A slow zoom on photos and a soft fade between shots. Both on by default. |
+| **Music** | Upload an audio file and it appears in the picker, playing under the narration at a level you set. |
+
+Karaoke works by emitting each caption once per word with a different one lit, because the
+renderer shows and hides whole elements rather than restyling one mid-shot. A five-word cue
+becomes five elements, which is nothing next to the frames being encoded.
+
+Uploaded audio never appears as a shot — it is only offered as music — and the transparent
+overlay format carries no audio at all, music included.
+
 Storage is capped per account (`HV_MEDIA_QUOTA_BYTES`, 512 MB) because the renderer reads
 these files off the same disk everything else lives on. Each render stages its inputs into a
 scratch directory using hard links, so a 200 MB clip costs nothing to prepare and the

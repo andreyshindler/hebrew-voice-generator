@@ -21,6 +21,19 @@ const SIZES = {
   landscape: [1280, 720],
 };
 
+/* Key-sorted JSON, so two plans that differ only in property order compare
+   equal - which is how the server stores and compares them too. */
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value === undefined ? null : value);
+}
+
 const LABELS = {
   queued: "בתור…",
   running: "מייצר וידאו…",
@@ -28,7 +41,9 @@ const LABELS = {
 };
 
 export class Renders {
-  constructor({ enabled, maxSeconds, media }) {
+  constructor({ enabled, maxSeconds, media, edit }) {
+    /* Caption styling, motion and music. Optional, like the strip. */
+    this.edit = edit || { plan: (durations) => ({ durations: durations || [] }) };
     /* Ordered uploads to composite behind the captions. Optional so the render
        panel still works on a page without the strip. */
     this.media = media || { ids: () => [] };
@@ -89,13 +104,17 @@ export class Renders {
       }
       const [width, height] = SIZES[this.size.value] || [];
       const wanted = this.media.ids().join(",");
+      /* Styling is part of what makes a file, so a render that differs only in
+         caption colour is a different render and must not be offered here. */
+      const plan = canonical(this.edit.plan(this.media.durations()));
       const done = items.find(
         (r) =>
           r.status === "done" &&
           r.format === this.format.value &&
           r.width === width &&
           r.height === height &&
-          (r.media_ids || []).join(",") === wanted
+          (r.media_ids || []).join(",") === wanted &&
+          canonical(r.plan || {}) === plan
       );
       if (done) this._offer(done);
     } catch (error) {
@@ -127,6 +146,7 @@ export class Renders {
         format: this.format.value,
         size: this.size.value,
         media_ids: this.media.ids(),
+        plan: this.edit.plan(this.media.durations()),
       });
       if (render.status === "done") {
         // An identical render already existed, so there is nothing to wait for.

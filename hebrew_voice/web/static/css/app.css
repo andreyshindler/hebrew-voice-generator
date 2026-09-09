@@ -787,40 +787,94 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 .media-strip:empty { display: none; }
 .media-item {
-  position: relative;
   flex: 0 0 auto;
-  inline-size: 64px;
-  block-size: 64px;
+  inline-size: 82px;
+  display: grid;
+  gap: 4px;
+}
+.media-thumb {
+  inline-size: 82px;
+  block-size: 82px;
+  object-fit: cover;
+  display: block;
   border-radius: var(--radius-sm);
-  overflow: hidden;
   background: var(--surface-3);
 }
-.media-thumb { inline-size: 100%; block-size: 100%; object-fit: cover; display: block; }
-/* Bottom corner, not the top one: the remove button is up there, and which
-   physical side `inset-inline-*` lands on depends on the resolved direction -
-   so the two were sitting on top of each other. Different rows cannot
-   collide whichever way the text runs. */
+.media-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 2px;
+}
 .media-index {
-  position: absolute;
-  inset-block-end: 2px;
-  inset-inline-start: 4px;
-  padding: 0 5px;
-  border-radius: 99px;
-  background: rgba(0, 0, 0, .65);
-  color: #fff;
   font-size: 11px;
-  line-height: 16px;
+  color: var(--text-faint);
+  min-inline-size: 12px;
+  text-align: center;
 }
-.media-remove {
-  position: absolute;
-  inset-block-start: 2px;
-  inset-inline-end: 2px;
-  inline-size: 22px;
-  block-size: 22px;
-  border-color: transparent;
-  background: rgba(0, 0, 0, .55);
+.media-nudge {
+  inline-size: 18px;
+  block-size: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
 }
-.media-remove svg { inline-size: 12px; block-size: 12px; }
+.media-nudge:hover { background: var(--border-strong); color: var(--text); }
+.media-remove:hover { background: var(--danger-soft); color: var(--danger); }
+.media-hold {
+  inline-size: 100%;
+  block-size: 12px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* -------------------------------------------------------------- edit panel */
+
+.edit-panel {
+  margin-block-start: 10px;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 8px;
+  font-size: 13px;
+}
+.edit-panel > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  list-style: none;
+}
+.edit-panel > summary::-webkit-details-marker { display: none; }
+.edit-panel > summary::before { content: "▸ "; }
+.edit-panel[open] > summary::before { content: "▾ "; }
+.edit-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  margin-block-start: 10px;
+}
+.edit-grid label { color: var(--text-muted); }
+.edit-grid input[type="range"] { inline-size: 100%; accent-color: var(--accent); }
+.edit-grid input[type="color"] {
+  inline-size: 44px;
+  block-size: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  cursor: pointer;
+}
+.edit-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-block-start: 10px;
+}
 
 .history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 

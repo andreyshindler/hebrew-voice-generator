@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .. import repo, storage
 from ..config import Settings
+from ..editing import normalise_plan
 from ..errors import NotFound, QuotaExceeded, RateLimited, UnprocessableEntity
 from ..models import RENDER_FORMATS, RENDER_SIZES, Render, User
 from ..quota import day_reset_epoch, quota_day
@@ -46,6 +47,9 @@ class RenderRequest(BaseModel):
     #: Uploaded photos and clips to show behind the captions, in running
     #: order. Empty means captions over a plain background, as before.
     media_ids: List[str] = Field(default_factory=list)
+    #: How it is cut: per-shot durations, caption styling, motion, music.
+    #: Validated and clamped server-side - see hebrew_voice.editing.
+    plan: Optional[dict] = Field(default=None)
 
 
 async def _checked_media(settings: Settings, user: User, media_ids: List[str]) -> List[str]:
@@ -123,6 +127,17 @@ async def request_render(
     width, height = RENDER_SIZES[size]
 
     media_ids = await _checked_media(settings, user, payload.media_ids)
+    plan = normalise_plan(payload.plan, shot_count=len(media_ids))
+    # The music track has to belong to this account too, and be audio.
+    if plan.get("music"):
+        track = await run_in_threadpool(
+            repo.get_media_many, settings.db_path, [plan["music"]["id"]], user.id
+        )
+        if not track or track[0].kind != "audio":
+            raise UnprocessableEntity(
+                "That music track is not available", code="media_unavailable"
+            )
+    plan_json = json.dumps(plan, sort_keys=True, separators=(",", ":"))
 
     words = payload.words_per_cue or generation.words_per_cue
     existing = await run_in_threadpool(
@@ -135,6 +150,7 @@ async def request_render(
         height=height,
         fps=settings.render_fps,
         media_ids=json.dumps(media_ids),
+        plan=plan_json,
     )
     if existing is not None:
         # Byte-identical output; charging for it again would be theft of quota.
@@ -181,6 +197,7 @@ async def request_render(
         height=height,
         fps=settings.render_fps,
         media_ids=tuple(media_ids),
+        plan=plan,
     )
     await run_in_threadpool(repo.insert_render, settings.db_path, render)
 

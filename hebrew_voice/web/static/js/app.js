@@ -5,6 +5,7 @@ import { api, url } from "./api.js";
 import { Composer } from "./composer.js";
 import { History } from "./history.js";
 import { Player } from "./player.js";
+import { EditPanel } from "./editing.js";
 import { MediaStrip } from "./media.js";
 import { Renders } from "./renders.js";
 import { $, formatNumber, toast } from "./ui.js";
@@ -16,15 +17,18 @@ const composer = new Composer({
   maxChars: bootstrap.limits.max_chars,
 });
 const player = new Player();
+const edit = new EditPanel({ onChange: () => renders.refresh() });
 const media = new MediaStrip({
-  /* A different set of shots is a different video, so anything already shown
-     for the previous set no longer describes what the button would make. */
+  /* A different set of shots, or a different order, is a different video - so
+     anything already shown no longer describes what the button would make. */
   onChange: () => renders.refresh(),
+  onTracks: (tracks) => edit.setTracks(tracks),
 });
 const renders = new Renders({
   enabled: bootstrap.rendering && bootstrap.rendering.enabled,
   maxSeconds: bootstrap.rendering && bootstrap.rendering.max_seconds,
   media,
+  edit,
 });
 if (bootstrap.rendering && bootstrap.rendering.enabled) media.load();
 const history = new History({

@@ -182,6 +182,19 @@ MIGRATIONS: List[Tuple[int, str]] = [
         ALTER TABLE renders ADD COLUMN media_ids TEXT NOT NULL DEFAULT '[]';
         """,
     ),
+    (
+        6,
+        # Everything else about how a render is cut, as one JSON blob: per-shot
+        # durations, caption styling, motion, music.
+        #
+        # A column per knob would mean a migration per knob, and these are
+        # presentation choices that only the composition reads - nothing joins
+        # or filters on them. The blob is also the dedupe key, so a render with
+        # different styling is correctly a different render.
+        """
+        ALTER TABLE renders ADD COLUMN plan TEXT NOT NULL DEFAULT '{}';
+        """,
+    ),
 ]
 
 

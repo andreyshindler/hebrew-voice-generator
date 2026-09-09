@@ -7,12 +7,17 @@ import { api } from "./api.js";
 import { $, el, formatBytes, icon, ICONS, toast } from "./ui.js";
 
 export class MediaStrip {
-  constructor({ onChange }) {
+  constructor({ onChange, onTracks }) {
     this.onChange = onChange || (() => {});
+    /* Audio uploads are music, not shots, so they go to the edit panel. */
+    this.onTracks = onTracks || (() => {});
     this.input = $("#media-input");
     this.strip = $("#media-strip");
     this.hint = $("#media-hint");
     this.items = [];
+    /* Relative hold per shot id. Proportions, not seconds: the server scales
+       them to the voiceover, which is the only length that actually exists. */
+    this.holds = {};
     this.busy = false;
 
     if (!this.input) return;
@@ -21,7 +26,41 @@ export class MediaStrip {
 
   /** Ids in running order, for the render request. */
   ids() {
-    return this.items.map((item) => item.id);
+    return this.shots().map((item) => item.id);
+  }
+
+  /** Only the shots - music is chosen separately and never appears here. */
+  shots() {
+    return this.items.filter((item) => item.kind !== "audio");
+  }
+
+  /** Audio uploads, offered as background music. */
+  tracks() {
+    return this.items.filter((item) => item.kind === "audio");
+  }
+
+  /** Relative hold per shot, in running order. Empty means an even split. */
+  durations() {
+    const shots = this.shots();
+    return shots.some((item) => this.holds[item.id])
+      ? shots.map((item) => this.holds[item.id] || 1)
+      : [];
+  }
+
+  /** Move a shot earlier or later in the running order. */
+  move(item, delta) {
+    const from = this.items.indexOf(item);
+    const shots = this.shots();
+    const at = shots.indexOf(item);
+    const to = at + delta;
+    if (at < 0 || to < 0 || to >= shots.length) return;
+    /* Reorder within the full list by swapping with the neighbouring *shot*,
+       so an audio track sitting between them is not disturbed. */
+    const target = this.items.indexOf(shots[to]);
+    this.items.splice(from, 1);
+    this.items.splice(target, 0, item);
+    this._renderStrip();
+    this.onChange();
   }
 
   async load() {
@@ -33,6 +72,7 @@ export class MediaStrip {
       this.items = items.slice().reverse();
       this._renderStrip();
       this._renderHint(bytes_used, bytes_quota);
+      this.onTracks(this.tracks());
     } catch (error) {
       /* An empty strip is a fine starting state; the button still works. */
     }
@@ -83,26 +123,52 @@ export class MediaStrip {
 
   _renderStrip() {
     this.strip.replaceChildren(
-      ...this.items.map((item, index) =>
+      ...this.shots().map((item, index) =>
+        /* A small card in normal flow rather than controls floated over the
+           thumbnail: at this size they overlapped, and an invisible slider was
+           swallowing clicks meant for the reorder buttons. */
         el("li", { class: "media-item", title: item.name || "" }, [
           /* Video gets a <video> rather than a poster frame: there is no
              thumbnailer in this image, and a first frame is enough to
              recognise a clip by. */
           item.kind === "video"
-            ? el("video", { class: "media-thumb", src: item.url, muted: true, preload: "metadata" })
+            ? el("video", {
+                class: "media-thumb", src: item.url, muted: true, preload: "metadata",
+              })
             : el("img", { class: "media-thumb", src: item.url, alt: "" }),
-          el("span", { class: "media-index", dir: "ltr", text: String(index + 1) }),
-          el(
-            "button",
-            {
-              type: "button",
-              class: "icon-btn btn-danger media-remove",
-              title: "הסרה",
-              "aria-label": "הסרה",
+
+          el("div", { class: "media-bar" }, [
+            el("button", {
+              type: "button", class: "media-nudge", text: "‹",
+              title: "מוקדם יותר", "aria-label": "מוקדם יותר",
+              onclick: () => this.move(item, -1),
+            }),
+            el("span", { class: "media-index", dir: "ltr", text: String(index + 1) }),
+            el("button", {
+              type: "button", class: "media-nudge", text: "›",
+              title: "מאוחר יותר", "aria-label": "מאוחר יותר",
+              onclick: () => this.move(item, 1),
+            }),
+            el("button", {
+              type: "button", class: "media-nudge media-remove", text: "×",
+              title: "הסרה", "aria-label": "הסרה",
               onclick: () => this._remove(item),
+            }),
+          ]),
+
+          /* How long this shot holds, relative to the others. The server
+             scales them to the voiceover, so these are proportions. */
+          el("input", {
+            type: "range", class: "media-hold",
+            min: "0.5", max: "3", step: "0.5",
+            value: String(this.holds[item.id] || 1),
+            title: "משך יחסי",
+            "aria-label": "משך יחסי",
+            onchange: (event) => {
+              this.holds[item.id] = Number(event.target.value);
+              this.onChange();
             },
-            [icon(ICONS.trash)]
-          ),
+          }),
         ])
       )
     );

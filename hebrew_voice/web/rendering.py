@@ -21,7 +21,8 @@ import aiohttp
 from starlette.concurrency import run_in_threadpool
 
 from .. import repo, storage
-from ..composition import build_composition, plan_shots
+from ..composition import Shot, build_composition
+from ..editing import shot_durations
 from ..config import Settings
 from ..errors import NotFound
 from ..models import Render
@@ -132,6 +133,27 @@ def _prepare(settings: Settings, render: Render) -> tuple[str, str, float]:
             continue
         staged.append((item.kind, name))
 
+    holds = shot_durations(render.plan, shot_count=len(staged), total=generation.duration)
+    shots = []
+    start = 0.0
+    for (kind, name), hold in zip(staged, holds):
+        shots.append(Shot(kind=kind, src=name, start=start, duration=hold))
+        start += hold
+
+    music_name = ""
+    music = (render.plan.get("music") or {}) if not transparent else {}
+    if music.get("id"):
+        found = repo.get_media_many(settings.db_path, [music["id"]], render.user_id)
+        if found:
+            music_name = "music" + Path(found[0].rel).suffix
+            try:
+                storage.link_or_copy(
+                    storage.resolve_under(settings.data_dir, found[0].rel),
+                    workdir / music_name,
+                )
+            except NotFound:
+                music_name = ""
+
     html = build_composition(
         grouped,
         duration=generation.duration,
@@ -139,7 +161,10 @@ def _prepare(settings: Settings, render: Render) -> tuple[str, str, float]:
         height=render.height,
         audio_src=audio_name,
         transparent=transparent,
-        shots=plan_shots(staged, generation.duration),
+        shots=shots,
+        plan=render.plan,
+        word_cues=word_cues,
+        music_src=music_name,
     )
     (workdir / "index.html").write_text(html, encoding="utf-8")
     return workdir_rel, video_rel, generation.duration

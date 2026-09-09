@@ -193,6 +193,50 @@
         </div>
         <ul class="media-strip" id="media-strip"></ul>
 
+        <details class="edit-panel" id="edit-panel">
+          <summary>עריכה</summary>
+
+          <div class="edit-grid">
+            <label for="cap-scale">גודל כתוביות</label>
+            <input type="range" id="cap-scale" min="0.6" max="1.8" step="0.1" value="1">
+
+            <label for="cap-position">מיקום</label>
+            <select id="cap-position">
+              <option value="bottom" selected>למטה</option>
+              <option value="middle">באמצע</option>
+              <option value="top">למעלה</option>
+            </select>
+
+            <label for="cap-color">צבע</label>
+            <input type="color" id="cap-color" value="#ffffff">
+
+            <label for="music-select">מוזיקת רקע</label>
+            <select id="music-select"><option value="">ללא</option></select>
+
+            <label for="music-volume">עוצמת המוזיקה</label>
+            <input type="range" id="music-volume" min="0" max="0.6" step="0.05" value="0.15">
+          </div>
+
+          <div class="edit-toggles">
+            <label class="caption-check">
+              <input type="checkbox" id="cap-karaoke">
+              <span>הדגשת המילה הנאמרת</span>
+            </label>
+            <label class="caption-check">
+              <input type="checkbox" id="cap-box">
+              <span>רקע מאחורי הכתוביות</span>
+            </label>
+            <label class="caption-check">
+              <input type="checkbox" id="motion-zoom" checked>
+              <span>זום איטי על תמונות</span>
+            </label>
+            <label class="caption-check">
+              <input type="checkbox" id="motion-fade" checked>
+              <span>מעבר רך בין קטעים</span>
+            </label>
+          </div>
+        </details>
+
         <p class="render-note" id="render-note"></p>
         <div class="render-result" id="render-result" hidden></div>
       </div>

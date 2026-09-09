@@ -433,8 +433,8 @@ def insert_render(db: Path, render: Render) -> None:
             INSERT INTO renders
                 (id, generation_id, user_id, created_at, started_at, finished_at,
                  status, error, format, words_per_cue, width, height, fps,
-                 video_rel, video_bytes, media_ids)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 video_rel, video_bytes, media_ids, plan)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 render.id, render.generation_id, render.user_id, render.created_at,
@@ -442,6 +442,7 @@ def insert_render(db: Path, render: Render) -> None:
                 render.format, render.words_per_cue, render.width, render.height,
                 render.fps, render.video_rel, render.video_bytes,
                 json.dumps(list(render.media_ids)),
+                json.dumps(render.plan, sort_keys=True, separators=(",", ":")),
             ),
         )
 
@@ -495,6 +496,7 @@ def find_reusable_render(
     height: int,
     fps: int,
     media_ids: str = "[]",
+    plan: str = "{}",
 ) -> Optional[Render]:
     """A finished render with identical parameters, if one exists.
 
@@ -507,10 +509,10 @@ def find_reusable_render(
             SELECT * FROM renders
              WHERE generation_id = ? AND status = 'done' AND video_rel IS NOT NULL
                AND format = ? AND words_per_cue = ? AND width = ? AND height = ? AND fps = ?
-               AND media_ids = ?
+               AND media_ids = ? AND plan = ?
              ORDER BY created_at DESC LIMIT 1
             """,
-            (gen_id, fmt, words_per_cue, width, height, fps, media_ids),
+            (gen_id, fmt, words_per_cue, width, height, fps, media_ids, plan),
         ).fetchone()
     return Render.from_row(row) if row else None
 
