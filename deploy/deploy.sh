@@ -119,6 +119,42 @@ else
     log "Container not running - skipping the backup"
 fi
 
+# --------------------------------------------------- name collision preflight
+
+# Container names are global to the Docker daemon rather than scoped to the
+# compose project, so a second stack whose .env is missing the overrides
+# quietly claims production's name. Docker's own error names the conflict but
+# not the cause, and by then it has already rebuilt the image - over
+# production's tag, because that is missing too.
+PROJECT="$(compose config 2>/dev/null | sed -n 's/^name: *//p' | head -1)"
+while read -r claimed; do
+    [ -n "$claimed" ] || continue
+    owner="$($DOCKER inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' \
+             "$claimed" 2>/dev/null || true)"
+    if [ -n "$owner" ] && [ "$owner" != "$PROJECT" ]; then
+        die "container name '$claimed' is already owned by the '$owner' stack.
+
+       This checkout is the '$PROJECT' stack, so its .env is missing the
+       overrides that keep two instances apart. Add to $APP_DIR/.env:
+
+           COMPOSE_PROJECT_NAME=$PROJECT
+           HV_CONTAINER_NAME=$PROJECT
+           HV_RENDER_CONTAINER_NAME=$PROJECT-renderer
+           HV_IMAGE=$PROJECT
+           HV_RENDER_IMAGE=$PROJECT-renderer
+           HV_PUBLISH_PORT=<a free port, not production's>
+           HV_BASE_URL=<this instance's own public URL>
+
+       Then check it before starting anything:
+
+           docker compose config | grep -E 'container_name|image:'
+
+       See deploy/BRANCH.md. Nothing has been started or changed."
+    fi
+done <<COLLISION_CHECK
+$(compose config 2>/dev/null | sed -n 's/^ *container_name: *//p')
+COLLISION_CHECK
+
 # ----------------------------------------------------------------- rebuild
 
 log "Building and restarting"

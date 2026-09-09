@@ -100,6 +100,31 @@ The other prefix blocks on that host are safe: `/api/`, `/static/` and the
 rest are matched against the *whole* request path, and
 `/voice-gen-branch/api/…` does not start with `/api/`.
 
+### Check it before starting anything
+
+Every one of those keys is load-bearing. Miss them and compose falls back to
+production's names — the deploy still *builds*, over production's image tag,
+and only then fails on the container name. Confirm first:
+
+```bash
+docker compose config | grep -E 'container_name|image:|published'
+```
+
+Every line must say `branch`. If any says plain `hebrew-voice`, the `.env` is
+not being read — check you are in the branch checkout and that the keys have no
+leading spaces.
+
+`deploy.sh` now refuses to start when a name belongs to another stack, and says
+which keys are missing, but this check costs nothing and catches it earlier.
+
+> **If you already hit the collision:** the build overwrote
+> `hebrew-voice:latest` with branch code. Production keeps running — a
+> container holds an image *ID*, not a tag, so nothing changed under it, and
+> `restart: unless-stopped` reuses that ID. But the tag is now wrong, so don't
+> run a bare `docker compose up -d` in the production checkout, which would
+> recreate it from the branch image. Re-running `./deploy/deploy.sh` there
+> rebuilds from `main` and puts the tag back.
+
 ## 4. Deploy it
 
 ```bash
