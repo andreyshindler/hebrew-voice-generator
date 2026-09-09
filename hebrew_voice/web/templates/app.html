@@ -170,6 +170,21 @@
         </label>
       </div>
 
+      <!-- Rendering is gated twice: hidden entirely when the server has no
+           renderer, and again when the recording predates word timings. -->
+      <div class="render-box" id="render-box" hidden>
+        <div class="render-row">
+          <label for="render-format">וידאו</label>
+          <select id="render-format">
+            <option value="mp4">סרטון עם כתוביות</option>
+            <option value="webm">שכבת כתוביות שקופה</option>
+          </select>
+          <button type="button" class="btn btn-ghost" id="render-go">צור וידאו</button>
+        </div>
+        <p class="render-note" id="render-note"></p>
+        <div class="render-result" id="render-result" hidden></div>
+      </div>
+
       <div class="result-tabs">
         <button type="button" class="tab is-active" data-tab="prepared">טקסט מוקרא</button>
         <button type="button" class="tab" data-tab="cues">כתוביות</button>

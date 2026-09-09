@@ -22,6 +22,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${HV_APP_DIR:-$(dirname -- "$SCRIPT_DIR")}"
 BRANCH="${HV_DEPLOY_BRANCH:-main}"
 CONTAINER="${HV_CONTAINER:-hebrew-voice}"
+# The optional video renderer, by compose service name. Absent from
+# docker-compose.yml on installs that do not want video, which is fine.
+RENDER_SERVICE="${HV_RENDER_SERVICE:-hyperframes}"
 HEALTH_TIMEOUT="${HV_HEALTH_TIMEOUT:-90}"
 KEEP_BACKUPS="${HV_KEEP_BACKUPS:-5}"
 LOCK_FILE="${HV_LOCK_FILE:-/tmp/hebrew-voice-deploy.lock}"
@@ -37,6 +40,7 @@ done
 
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[31merror: %s\033[0m\n' "$*" >&2; exit 1; }
+warn() { printf '\n\033[33mwarning: %s\033[0m\n' "$*" >&2; }
 
 # The container name is fixed, so two overlapping deploys would fight over it.
 exec 9>"$LOCK_FILE"
@@ -122,6 +126,33 @@ log "Pruning dangling images"
 docker image prune -f >/dev/null || true
 
 # ------------------------------------------------------------ health check
+
+# The renderer is checked first and separately. `compose up` starts every
+# service, but only the app was ever polled here - so a deploy could report
+# success with the renderer dead and video failing for every user.
+if compose ps --services 2>/dev/null | grep -qx "$RENDER_SERVICE"; then
+    log "Waiting for the renderer (up to ${HEALTH_TIMEOUT}s)"
+    deadline=$((SECONDS + HEALTH_TIMEOUT))
+    render_ok=0
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if compose exec -T "$RENDER_SERVICE" node -e \
+            "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+            2>/dev/null
+        then
+            render_ok=1
+            break
+        fi
+        sleep 2
+    done
+    if [ "$render_ok" -eq 1 ]; then
+        log "Renderer healthy"
+    else
+        # Not fatal: audio and subtitles are the product, video is an extra.
+        # Failing the deploy over it would block a fix for anything else.
+        warn "the renderer never became healthy - video rendering will fail"
+        compose logs --tail=30 "$RENDER_SERVICE" >&2 || true
+    fi
+fi
 
 # Inside the container the port is always 8080, whatever HV_PUBLISH_PORT maps
 # it to on the host - so this needs no knowledge of .env.

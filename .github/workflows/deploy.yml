@@ -5,15 +5,26 @@ name: Test and deploy
 on:
   push:
     branches: [main]
+  # Run the tests on pull requests too. Merging is what deploys, so without
+  # this a branch got no checks at all and "test before merge" meant
+  # remembering to run pytest by hand.
+  pull_request:
+    branches: [main]
   # A "Run workflow" button in the Actions tab, for redeploying the current
   # main without inventing a commit - after editing .env on the box, say.
   workflow_dispatch:
 
 # A second push while a deploy is running waits for it, then supersedes any
 # other queued run. The box only ever needs the newest commit.
+#
+# Keyed by ref so a pull request's test run cannot queue behind - or cancel -
+# the production deploy.
 concurrency:
-  group: deploy-production
-  cancel-in-progress: false
+  group: >-
+    ${{ github.event_name == 'pull_request'
+        && format('pr-{0}', github.ref)
+        || 'deploy-production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -39,6 +50,8 @@ jobs:
   deploy:
     name: Deploy to the VPS
     needs: test          # a red suite never reaches the server
+    # A pull request runs the tests and stops there; only main deploys.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment: production
     steps:

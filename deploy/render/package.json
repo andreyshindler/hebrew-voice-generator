@@ -1,0 +1,10 @@
+{
+  "name": "hebrew-voice-renderer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "HyperFrames render sidecar for the Hebrew voice generator",
+  "license": "MIT",
+  "dependencies": {
+    "@hyperframes/producer": "0.8.33"
+  }
+}

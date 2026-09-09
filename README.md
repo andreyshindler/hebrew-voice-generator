@@ -175,6 +175,51 @@ can't import a subtitle file. On the CLI it's `--words-in-cue N`.
 
 ---
 
+## Rendered video
+
+Importing an SRT is the reliable path, but it still asks the editor to lay Hebrew out. The
+result card can skip that and render the captions itself, using
+[HyperFrames](https://github.com/heygen-com/hyperframes) — HTML into MP4 through headless
+Chromium and FFmpeg. Because a browser does the layout, right-to-left ordering, niqqud and
+shaping are correct by construction, which is the whole thing the editors get wrong.
+
+Two outputs, chosen in the card:
+
+| | What you get |
+| --- | --- |
+| **סרטון עם כתוביות** | An MP4: the audio, with the captions burned into the picture. |
+| **שכבת כתוביות שקופה** | A VP9 WebM with a real alpha channel — captions only, no background. Drop it over your own footage as a layer. |
+
+Both use the density currently selected, so the karaoke setting gives word-by-word captions.
+
+**This needs a second container.** HyperFrames wants Node, Chromium and FFmpeg, none of which
+belong in an image that is otherwise pure Python with no compiler — and a render must not
+compete with the web worker for CPU. So it runs as a sidecar,
+[`deploy/render/`](deploy/render/), sharing the artifacts volume: the app writes a composition,
+the renderer writes the video back, and no large file crosses a socket. HeyGen publishes no
+image, so this one is ours to build and to keep patched — it carries a Chromium.
+
+`docker compose up` starts it and sets `HV_RENDER_URL`. **Leave that variable empty and the
+whole feature disappears** — no button, no endpoints, no worker — so an install that doesn't
+want a browser on the box simply drops the service.
+
+A render takes tens of seconds at best and minutes for anything long, so it is queued rather
+than done in the request: the card polls until the file is ready. Two consequences worth
+knowing:
+
+- **Renders are metered separately** (`HV_DAILY_RENDER_QUOTA`, 10/day) because one costs
+  minutes of CPU where a synthesis costs a second. Asking twice for the identical thing hands
+  back the first file instead of encoding it again, and never spends the allowance twice.
+- **720p is the default on purpose.** 1080p is 2.25× the pixels and roughly that much slower.
+  Measure on your own box before raising `HV_RENDER_WIDTH`/`HV_RENDER_HEIGHT` — and note that
+  the transparent format is slower still, since alpha on Linux forces screenshot capture
+  instead of the faster frame path.
+
+Recordings made before per-word timings existed can't be rendered, the same limit the density
+control has.
+
+---
+
 ## Deploying to a VPS
 
 See [`deploy/DEPLOY.md`](deploy/DEPLOY.md) for the full runbook.

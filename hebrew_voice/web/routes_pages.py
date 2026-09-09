@@ -35,6 +35,13 @@ async def index(request: Request, settings: Settings = Depends(get_settings)):
         "csrf_token": session.csrf_token,
         "voices": catalog(),
         "limits": {"max_chars": settings.max_chars, **quota.public()},
+        # Without a renderer the card hides the whole section rather than
+        # offering a button whose only outcome is an error.
+        "rendering": {
+            "enabled": settings.rendering_enabled,
+            "max_seconds": settings.max_render_seconds,
+            "daily_quota": settings.daily_render_quota,
+        },
         "version": __version__,
     }
     return _templates(request).TemplateResponse(

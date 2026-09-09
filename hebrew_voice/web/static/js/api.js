@@ -45,6 +45,12 @@ const MESSAGES = {
   synthesis_timeout: "היצירה ארכה יותר מדי. נסו טקסט קצר יותר",
   tts_upstream_failed: "שירות ההקראה אינו זמין כרגע. נסו שוב בעוד רגע",
   not_found: "הפריט לא נמצא",
+  rendering_disabled: "יצירת וידאו אינה זמינה בשרת הזה",
+  render_quota_exceeded: "נגמרה מכסת הווידאו היומית. היא מתאפסת בחצות",
+  already_rendering: "כבר רץ וידאו להקלטה הזו. המתינו שיסתיים",
+  unsupported_format: "פורמט הווידאו אינו נתמך",
+  too_long_to_render: "ההקלטה ארוכה מדי ליצירת וידאו",
+  cues_unavailable: "להקלטה הזו אין תזמוני מילים",
   internal_error: "אירעה שגיאה בשרת",
 };
 
@@ -120,4 +126,8 @@ export const api = {
   },
   generation: (id) => request(`/api/generations/${id}`),
   remove: (id) => request(`/api/generations/${id}`, { method: "DELETE" }),
+  requestRender: (id, body) =>
+    request(`/api/generations/${id}/renders`, { method: "POST", body }),
+  renders: (id) => request(`/api/generations/${id}/renders`),
+  render: (renderId) => request(`/api/renders/${renderId}`),
 };

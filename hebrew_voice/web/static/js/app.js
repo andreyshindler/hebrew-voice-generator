@@ -5,6 +5,7 @@ import { api, url } from "./api.js";
 import { Composer } from "./composer.js";
 import { History } from "./history.js";
 import { Player } from "./player.js";
+import { Renders } from "./renders.js";
 import { $, formatNumber, toast } from "./ui.js";
 
 const bootstrap = JSON.parse($("#bootstrap").textContent);
@@ -14,10 +15,15 @@ const composer = new Composer({
   maxChars: bootstrap.limits.max_chars,
 });
 const player = new Player();
+const renders = new Renders({
+  enabled: bootstrap.rendering && bootstrap.rendering.enabled,
+  maxSeconds: bootstrap.rendering && bootstrap.rendering.max_seconds,
+});
 const history = new History({
   voices: bootstrap.voices,
   onOpen: (generation, { autoplay }) => {
     player.show(generation, { autoplay });
+    renders.show(generation);
     history.markCurrent(generation.id);
   },
   onRestore: (generation) => {
@@ -72,6 +78,7 @@ async function generate() {
   try {
     const generation = await api.synthesize(composer.payload());
     player.show(generation, { autoplay: true });
+    renders.show(generation);
     history.prepend(generation);
     history.markCurrent(generation.id);
     renderQuota({ ...generation.quota, used_today: generation.quota.used_today });
