@@ -59,14 +59,21 @@ HV_RENDER_CONTAINER_NAME=hebrew-voice-branch-renderer
 HV_IMAGE=hebrew-voice-branch
 HV_RENDER_IMAGE=hebrew-voice-branch-renderer
 
-# A free port. Check first: sudo nginx -T | grep -oE '127\.0\.0\.1:[0-9]+' | sort -u
+# A free port. Production is on 8095. On srv1515969 the loopback ports already
+# taken are 3000, 3001, 4000, 5001, 8000, 8080, 8082, 8091, 8095, 8096, 8431
+# and 18788, so 8090 is clear - but that box gains apps, so check first:
+#     sudo nginx -T | grep -oE '127\.0\.0\.1:[0-9]+' | sort -u
 HV_PUBLISH_PORT=8090
 
 # The branch's own public URL. Getting this wrong is the most likely mistake:
-# with production's URL here, the branch sets a session cookie on /voice-gen
-# and the two instances log each other out.
+# cookies are scoped to this prefix, so production's value here would put the
+# branch's session cookie on /voice-gen and the two would log each other out.
 HV_BASE_URL=https://srv1515969.hstgr.cloud/voice-gen-branch
 ```
+
+With it set correctly the two are isolated by construction: `cookie_path`
+derives from the prefix, giving `/voice-gen/` and `/voice-gen-branch/`, and a
+browser sends neither cookie to the other app.
 
 A fresh volume means **a fresh database**: no accounts. Sign up again on the
 branch instance with an invite code from `HV_INVITE_CODES`. That is deliberate
@@ -83,8 +90,15 @@ sudo -e /etc/nginx/sites-available/<the-existing-site>
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-`location /voice-gen-branch/` is more specific than `location /voice-gen/`, so
-nginx picks the right one regardless of the order you paste them in.
+Order does not matter. nginx takes the longest matching prefix, and
+`/voice-gen-branch/…` is not prefixed by `/voice-gen/` at all — the strings
+diverge at the `-`. Without the block the catch-all `location /` would send
+the branch URL to whatever is on `:5001`, which is the failure to expect if
+you forget this step.
+
+The other prefix blocks on that host are safe: `/api/`, `/static/` and the
+rest are matched against the *whole* request path, and
+`/voice-gen-branch/api/…` does not start with `/api/`.
 
 ## 4. Deploy it
 

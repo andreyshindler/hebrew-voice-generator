@@ -22,8 +22,9 @@ location = /voice-gen-branch {
 }
 
 location /voice-gen-branch/ {
-    # HV_PUBLISH_PORT of the BRANCH stack - not production's. 8090 here;
-    # check nothing else on the box already has it:
+    # HV_PUBLISH_PORT of the BRANCH stack - not production's, which is 8095.
+    # 8090 was free on srv1515969 when this was written; confirm before reusing
+    # it, since that box runs a lot:
     #     sudo nginx -T | grep -oE '127\.0\.0\.1:[0-9]+' | sort -u
     proxy_pass http://127.0.0.1:8090/;
 
