@@ -45,6 +45,14 @@ COPY server.js ./
 EXPOSE 8080
 
 # Chromium needs a real /dev/shm; compose sets shm_size for this.
-USER node
+#
+# The uid must match the app's appuser. Both containers share the artifacts
+# volume, and the app creates /data as 0700 owned by 10001 - so any other uid
+# cannot even traverse it. The node image's own `node` user is 1000, and using
+# it makes every render fail with "Project directory not found", because
+# existsSync() cannot tell a directory it may not enter from one that is not
+# there. Keep this in step with the uid in the app's Dockerfile.
+RUN useradd --system --create-home --uid 10001 renderer
+USER renderer
 
 CMD ["node", "server.js"]

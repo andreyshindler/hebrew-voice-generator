@@ -41,6 +41,22 @@ def _composition_rel(video_rel: str) -> str:
     return video_rel.rsplit(".", 1)[0] + COMPOSITION_FILENAME_SUFFIX
 
 
+def _explain(detail: str) -> str:
+    """Add the cause to renderer errors whose wording hides it.
+
+    The renderer reports a directory it may not enter exactly as it reports one
+    that is not there, so the same message covers a missing volume mount and a
+    uid mismatch - and neither is guessable from the text.
+    """
+    if "Project directory not found" in detail:
+        return (
+            f"{detail} - the renderer cannot see the artifacts volume. Check it "
+            "mounts the same volume at /data as the app, and that it runs as the "
+            "same uid, since /data is 0700."
+        )
+    return detail
+
+
 async def _post_render(settings: Settings, payload: dict) -> None:
     """Ask the sidecar to render, and raise with its message if it refuses.
 
@@ -56,8 +72,8 @@ async def _post_render(settings: Settings, payload: dict) -> None:
             async with session.post(url, json=payload) as response:
                 body = await response.json(content_type=None)
                 if response.status >= 400 or not (body or {}).get("success", True):
-                    detail = (body or {}).get("error") or f"HTTP {response.status}"
-                    raise RenderError(f"renderer failed: {str(detail)[:300]}")
+                    detail = str((body or {}).get("error") or f"HTTP {response.status}")
+                    raise RenderError(f"renderer failed: {_explain(detail)[:400]}")
     except asyncio.TimeoutError as exc:
         raise RenderError(f"render exceeded {settings.render_timeout:.0f}s") from exc
     except aiohttp.ClientError as exc:
