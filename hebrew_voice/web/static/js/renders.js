@@ -85,6 +85,9 @@ export class Renders {
       (!this.maxSeconds || generation.duration <= this.maxSeconds);
     this.box.hidden = !renderable;
     if (!renderable) return;
+    /* The timeline measures itself against the voiceover, so it cannot draw a
+       ruler until it knows which recording is loaded. */
+    this.media.setDuration(generation.duration);
 
     this.button.disabled = false;
     /* An earlier render of this recording is worth surfacing - it cost real

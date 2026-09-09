@@ -6,7 +6,7 @@ import { Composer } from "./composer.js";
 import { History } from "./history.js";
 import { Player } from "./player.js";
 import { EditPanel } from "./editing.js";
-import { MediaStrip } from "./media.js";
+import { Timeline } from "./media.js";
 import { Renders } from "./renders.js";
 import { $, formatNumber, toast } from "./ui.js";
 
@@ -18,7 +18,7 @@ const composer = new Composer({
 });
 const player = new Player();
 const edit = new EditPanel({ onChange: () => renders.refresh() });
-const media = new MediaStrip({
+const media = new Timeline({
   /* A different set of shots, or a different order, is a different video - so
      anything already shown no longer describes what the button would make. */
   onChange: () => renders.refresh(),

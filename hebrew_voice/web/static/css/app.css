@@ -734,129 +734,160 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* -------------------------------------------------------- video rendering */
 
-.render-box {
-  margin-block-start: 12px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface-2);
+/* A full-width band under the grid: a timeline has to be wide to be worth
+   having, and in the 420px sidebar it was a strip of thumbnails. The padding
+   lines up with .layout's own gutter, so the editor sits flush beneath it. */
+.editor-band {
+  max-inline-size: 1400px;
+  margin-inline: auto;
+  padding: 0 24px 24px;
 }
-.render-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-size: 13.5px;
-}
-.render-row label { color: var(--text-muted); }
-.render-row .btn { margin-inline-start: auto; }
-.render-note {
-  margin-block-start: 8px;
-  font-size: 12px;
-  color: var(--text-faint);
-}
-.render-note:empty { display: none; }
-.render-result {
+
+.editor-head {
   display: flex;
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
-  margin-block-start: 10px;
+  margin-block-end: 14px;
 }
-.render-meta { font-size: 12px; color: var(--text-faint); }
-
-.media-row {
+.editor-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-block-start: 10px;
-}
-.btn-upload { cursor: pointer; font-size: 13px; padding: 7px 12px; }
-.media-hint { font-size: 12px; color: var(--text-faint); }
-
-/* The running order, left to right. Scrolls rather than wrapping, so the
-   sequence stays readable however many shots there are. */
-.media-strip {
-  list-style: none;
-  margin: 10px 0 0;
-  padding: 0 0 4px;
-  display: flex;
   gap: 8px;
-  overflow-x: auto;
+  flex-wrap: wrap;
+  margin-inline-start: auto;
 }
-.media-strip:empty { display: none; }
-.media-item {
-  flex: 0 0 auto;
-  inline-size: 82px;
-  display: grid;
-  gap: 4px;
+.btn-upload { cursor: pointer; }
+
+/* ---------------------------------------------------------------- timeline */
+
+.timeline { margin-block-end: 16px; }
+
+.tl-ruler {
+  position: relative;
+  block-size: 16px;
+  margin-block-end: 4px;
+  border-block-end: 1px solid var(--border);
 }
-.media-thumb {
-  inline-size: 82px;
-  block-size: 82px;
+.tl-tick {
+  position: absolute;
+  inset-block-start: 0;
+  transform: translateX(50%);
+  font-size: 10px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+}
+
+.tl-track {
+  display: flex;
+  align-items: stretch;
+  block-size: 128px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.tl-track:empty { display: none; }
+
+.tl-block {
+  position: relative;
+  min-inline-size: 0;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+.tl-thumb {
+  inline-size: 100%;
+  block-size: 100%;
   object-fit: cover;
   display: block;
-  border-radius: var(--radius-sm);
-  background: var(--surface-3);
 }
-.media-bar {
+.tl-meta {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-start: 6px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 2px;
-}
-.media-index {
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, .62);
+  color: #fff;
   font-size: 11px;
-  color: var(--text-faint);
-  min-inline-size: 12px;
-  text-align: center;
+  font-family: var(--mono);
 }
-.media-nudge {
-  inline-size: 18px;
-  block-size: 18px;
+.tl-tools {
+  position: absolute;
+  inset-block-end: 6px;
+  inset-inline-start: 6px;
+  display: flex;
+  gap: 3px;
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+/* Focus keeps them up for the keyboard, since hover cannot. */
+.tl-block:hover .tl-tools,
+.tl-tools:focus-within { opacity: 1; }
+.tl-btn {
+  inline-size: 22px;
+  block-size: 22px;
   padding: 0;
   border: 0;
-  border-radius: 4px;
-  background: var(--surface-3);
-  color: var(--text-muted);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, .62);
+  color: #fff;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
-.media-nudge:hover { background: var(--border-strong); color: var(--text); }
-.media-remove:hover { background: var(--danger-soft); color: var(--danger); }
-.media-hold {
-  inline-size: 100%;
-  block-size: 12px;
+.tl-btn:hover { background: rgba(0, 0, 0, .85); }
+.tl-del:hover { background: var(--danger); }
+
+/* The draggable boundary between two shots. */
+.tl-grip {
+  flex: 0 0 8px;
+  cursor: col-resize;
+  background: var(--surface);
+  border-inline: 1px solid var(--border);
+  touch-action: none;
+}
+.tl-grip:hover,
+.tl-grip:focus-visible { background: var(--accent); outline: none; }
+
+.tl-empty {
   margin: 0;
-  accent-color: var(--accent);
-  cursor: pointer;
+  padding: 26px 0;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 13.5px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
 }
 
-/* -------------------------------------------------------------- edit panel */
+/* ------------------------------------------------------------ edit columns */
 
-.edit-panel {
-  margin-block-start: 10px;
+.editor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 18px 28px;
+  padding-block-start: 14px;
   border-block-start: 1px solid var(--border);
-  padding-block-start: 8px;
-  font-size: 13px;
 }
-.edit-panel > summary {
-  cursor: pointer;
-  color: var(--text-muted);
-  list-style: none;
+.editor-col { min-inline-size: 0; }
+.editor-sub {
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-faint);
+  margin-block-end: 10px;
 }
-.edit-panel > summary::-webkit-details-marker { display: none; }
-.edit-panel > summary::before { content: "▸ "; }
-.edit-panel[open] > summary::before { content: "▾ "; }
 .edit-grid {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px 12px;
-  margin-block-start: 10px;
+  font-size: 13.5px;
 }
 .edit-grid label { color: var(--text-muted); }
 .edit-grid input[type="range"] { inline-size: 100%; accent-color: var(--accent); }
@@ -870,11 +901,27 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
   cursor: pointer;
 }
 .edit-toggles {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 18px;
-  margin-block-start: 10px;
+  display: grid;
+  gap: 6px;
+  margin-block-start: 12px;
+  font-size: 13.5px;
 }
+
+.render-note {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.render-note:empty { display: none; }
+.render-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-block: 8px;
+}
+.render-meta { font-size: 12px; color: var(--text-faint); }
+.media-hint { margin: 0; font-size: 12px; color: var(--text-faint); }
 
 .history-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 

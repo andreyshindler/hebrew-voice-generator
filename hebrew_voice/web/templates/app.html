@@ -170,77 +170,6 @@
         </label>
       </div>
 
-      <!-- Rendering is gated twice: hidden entirely when the server has no
-           renderer, and again when the recording predates word timings. -->
-      <div class="render-box" id="render-box" hidden>
-        <div class="render-row">
-          <label for="render-format">וידאו</label>
-          <select id="render-format">
-            <option value="mp4">סרטון עם כתוביות</option>
-            <option value="webm">שכבת כתוביות שקופה</option>
-          </select>
-          <select id="render-size">
-            <option value="vertical" selected>אנכי 9:16</option>
-            <option value="square">ריבוע 1:1</option>
-            <option value="landscape">רוחב 16:9</option>
-          </select>
-          <button type="button" class="btn btn-ghost" id="render-go">צור וידאו</button>
-        </div>
-        <div class="media-row">
-          <label class="btn btn-ghost btn-upload" for="media-input">הוספת תמונות וסרטונים</label>
-          <input type="file" id="media-input" accept="image/*,video/*" multiple hidden>
-          <span class="media-hint" id="media-hint"></span>
-        </div>
-        <ul class="media-strip" id="media-strip"></ul>
-
-        <details class="edit-panel" id="edit-panel">
-          <summary>עריכה</summary>
-
-          <div class="edit-grid">
-            <label for="cap-scale">גודל כתוביות</label>
-            <input type="range" id="cap-scale" min="0.6" max="1.8" step="0.1" value="1">
-
-            <label for="cap-position">מיקום</label>
-            <select id="cap-position">
-              <option value="bottom" selected>למטה</option>
-              <option value="middle">באמצע</option>
-              <option value="top">למעלה</option>
-            </select>
-
-            <label for="cap-color">צבע</label>
-            <input type="color" id="cap-color" value="#ffffff">
-
-            <label for="music-select">מוזיקת רקע</label>
-            <select id="music-select"><option value="">ללא</option></select>
-
-            <label for="music-volume">עוצמת המוזיקה</label>
-            <input type="range" id="music-volume" min="0" max="0.6" step="0.05" value="0.15">
-          </div>
-
-          <div class="edit-toggles">
-            <label class="caption-check">
-              <input type="checkbox" id="cap-karaoke">
-              <span>הדגשת המילה הנאמרת</span>
-            </label>
-            <label class="caption-check">
-              <input type="checkbox" id="cap-box">
-              <span>רקע מאחורי הכתוביות</span>
-            </label>
-            <label class="caption-check">
-              <input type="checkbox" id="motion-zoom" checked>
-              <span>זום איטי על תמונות</span>
-            </label>
-            <label class="caption-check">
-              <input type="checkbox" id="motion-fade" checked>
-              <span>מעבר רך בין קטעים</span>
-            </label>
-          </div>
-        </details>
-
-        <p class="render-note" id="render-note"></p>
-        <div class="render-result" id="render-result" hidden></div>
-      </div>
-
       <div class="result-tabs">
         <button type="button" class="tab is-active" data-tab="prepared">טקסט מוקרא</button>
         <button type="button" class="tab" data-tab="cues">כתוביות</button>
@@ -259,6 +188,96 @@
     </section>
   </aside>
 </main>
+
+<!-- Its own band below the grid, not a third cell in it: a timeline in a 420px
+     sidebar is a strip of thumbnails, not something you can read the cut off.
+     Outside .layout because the sidebar is sticky, and a sticky column slides
+     over anything sharing its grid. Gated twice - hidden when the server has no
+     renderer, and again for recordings that predate word timings. -->
+<div class="editor-band">
+  <section class="panel editor" id="render-box" aria-labelledby="editor-title" hidden>
+    <div class="editor-head">
+      <h2 class="panel-title" id="editor-title">עריכת וידאו</h2>
+      <div class="editor-actions">
+        <select id="render-format">
+          <option value="mp4">סרטון עם כתוביות</option>
+          <option value="webm">שכבת כתוביות שקופה</option>
+        </select>
+        <select id="render-size">
+          <option value="vertical" selected>אנכי 9:16</option>
+          <option value="square">ריבוע 1:1</option>
+          <option value="landscape">רוחב 16:9</option>
+        </select>
+        <label class="btn btn-ghost btn-upload" for="media-input">הוספת מדיה</label>
+        <input type="file" id="media-input" accept="image/*,video/*,audio/*" multiple hidden>
+        <button type="button" class="btn btn-primary" id="render-go">צור וידאו</button>
+      </div>
+    </div>
+
+    <div class="timeline" id="timeline">
+      <div class="tl-ruler" id="tl-ruler"></div>
+      <div class="tl-track" id="tl-track"></div>
+      <p class="tl-empty" id="tl-empty">
+        הוסיפו תמונות או סרטונים כדי לבנות את הסרטון. בלי מדיה ייווצר סרטון כתוביות בלבד.
+      </p>
+    </div>
+
+    <div class="editor-grid">
+      <div class="editor-col">
+        <h3 class="editor-sub">כתוביות</h3>
+        <div class="edit-grid">
+          <label for="cap-scale">גודל</label>
+          <input type="range" id="cap-scale" min="0.6" max="1.8" step="0.1" value="1">
+          <label for="cap-position">מיקום</label>
+          <select id="cap-position">
+            <option value="bottom" selected>למטה</option>
+            <option value="middle">באמצע</option>
+            <option value="top">למעלה</option>
+          </select>
+          <label for="cap-color">צבע</label>
+          <input type="color" id="cap-color" value="#ffffff">
+        </div>
+        <div class="edit-toggles">
+          <label class="caption-check">
+            <input type="checkbox" id="cap-karaoke">
+            <span>הדגשת המילה הנאמרת</span>
+          </label>
+          <label class="caption-check">
+            <input type="checkbox" id="cap-box">
+            <span>רקע מאחורי הכתוביות</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="editor-col">
+        <h3 class="editor-sub">תנועה ומוזיקה</h3>
+        <div class="edit-grid">
+          <label for="music-select">מוזיקת רקע</label>
+          <select id="music-select"><option value="">ללא</option></select>
+          <label for="music-volume">עוצמה</label>
+          <input type="range" id="music-volume" min="0" max="0.6" step="0.05" value="0.15">
+        </div>
+        <div class="edit-toggles">
+          <label class="caption-check">
+            <input type="checkbox" id="motion-zoom" checked>
+            <span>זום איטי על תמונות</span>
+          </label>
+          <label class="caption-check">
+            <input type="checkbox" id="motion-fade" checked>
+            <span>מעבר רך בין קטעים</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="editor-col">
+        <h3 class="editor-sub">הפלט</h3>
+        <p class="render-note" id="render-note"></p>
+        <div class="render-result" id="render-result" hidden></div>
+        <p class="media-hint" id="media-hint"></p>
+      </div>
+    </div>
+  </section>
+</div>
 {% endblock %}
 
 {% block scripts %}
