@@ -108,6 +108,11 @@ class Generation:
     cues_rel: Optional[str] = None
     #: Words per cue in the stored subtitle files.
     words_per_cue: int = 7
+    #: Where the audio and its timings came from: "tts" for synthesis, or
+    #: "transcription" for a recording the user uploaded. A transcription has
+    #: no voice and no synthesis settings, so the UI cannot offer to replay or
+    #: restore them.
+    source: str = "tts"
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Generation":
@@ -135,11 +140,24 @@ class Generation:
             cue_count=row["cue_count"],
             cues_rel=row["cues_rel"],
             words_per_cue=row["words_per_cue"],
+            source=row["source"],
         )
 
     @property
     def duration(self) -> float:
         return self.duration_ms / 1000.0
+
+    @property
+    def audio_ext(self) -> str:
+        """The container the audio is actually in.
+
+        Synthesis always makes MP3. A transcribed recording keeps whatever was
+        uploaded, so the extension comes off the stored path rather than being
+        assumed - a WAV served as audio/mpeg does not play.
+        """
+        if not self.audio_rel or "." not in self.audio_rel.rsplit("/", 1)[-1]:
+            return "mp3"
+        return self.audio_rel.rsplit(".", 1)[-1].lower()
 
     def public(self, *, full: bool = False, base: str = "") -> Dict[str, Any]:
         """JSON shape for the API. ``full`` adds the text, for replay.
@@ -169,8 +187,9 @@ class Generation:
             # The density the stored files were rendered at, so the result
             # card opens showing what is actually on disk.
             "words_per_cue": self.words_per_cue,
+            "source": self.source,
             "urls": {
-                "audio": f"{base}/api/generations/{self.id}/audio.mp3",
+                "audio": f"{base}/api/generations/{self.id}/audio.{self.audio_ext}",
                 "srt": f"{base}/api/generations/{self.id}/subtitles.srt" if self.srt_rel else None,
                 "vtt": f"{base}/api/generations/{self.id}/subtitles.vtt" if self.vtt_rel else None,
             },
@@ -335,6 +354,70 @@ class Render:
             "media_ids": list(self.media_ids),
             "plan": self.plan,
             "url": f"{base}/api/renders/{self.id}/video.{self.format}" if ready else None,
+        }
+
+
+#: The states a transcription moves through. Same shape as a render, for the
+#: same reason: the database is the queue, so the row has to say where it is.
+TRANSCRIPTION_STATUSES = ("queued", "running", "done", "failed")
+
+
+@dataclass(frozen=True)
+class Transcription:
+    """One request to turn an uploaded recording into word timings.
+
+    Separate from the generation it produces because the job exists before the
+    recording does, and may never produce one at all. ``generation_id`` is
+    filled in only on success, which is also what the client polls for.
+    """
+
+    id: str
+    user_id: int
+    media_id: Optional[str]
+    generation_id: Optional[str]
+    created_at: int
+    started_at: Optional[int]
+    finished_at: Optional[int]
+    status: str
+    error: Optional[str]
+    #: Seconds of audio actually charged for. The browser's estimate at
+    #: reservation time, corrected to the provider's number once it answers.
+    seconds: float
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Transcription":
+        return cls(
+            id=row["id"],
+            user_id=row["user_id"],
+            media_id=row["media_id"],
+            generation_id=row["generation_id"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            status=row["status"],
+            error=row["error"],
+            seconds=row["seconds"],
+        )
+
+    @property
+    def is_finished(self) -> bool:
+        return self.status in ("done", "failed")
+
+    def public(self) -> Dict[str, Any]:
+        """JSON shape for the API.
+
+        ``generation_id`` appears only once the recording exists, so the client
+        can treat its presence as "ready" without also checking the status -
+        the same contract as a render's download URL.
+        """
+        ready = self.status == "done"
+        return {
+            "id": self.id,
+            "created_at": self.created_at,
+            "status": self.status,
+            "error": self.error,
+            "seconds": self.seconds,
+            "generation_id": self.generation_id if ready else None,
         }
 
 

@@ -74,17 +74,26 @@ def ensure_data_dir(data_dir: Path) -> None:
         pass
 
 
-def relative_paths(user_id: int, gen_id: str, *, when: Optional[float] = None) -> Artifacts:
+def relative_paths(
+    user_id: int, gen_id: str, *, when: Optional[float] = None, audio_ext: str = "mp3"
+) -> Artifacts:
     """Build the relative paths for a generation.
 
     Sharded by user and month so no single directory grows without bound.
+
+    ``audio_ext`` is "mp3" for everything the synthesiser makes. A transcribed
+    recording keeps whatever container it arrived in, because the app has no
+    way to convert it - so the extension has to be part of the path rather than
+    assumed by it.
     """
     if not _ID_RE.match(gen_id):
         raise ValueError("generation id must be 32 hex characters")
+    if not _FORMAT_RE.match(audio_ext):
+        raise ValueError("audio extension must be 2-5 lowercase alphanumerics")
     stamp = time.gmtime(when if when is not None else time.time())
     prefix = f"audio/{user_id}/{stamp.tm_year:04d}/{stamp.tm_mon:02d}"
     return Artifacts(
-        audio_rel=f"{prefix}/{gen_id}.mp3",
+        audio_rel=f"{prefix}/{gen_id}.{audio_ext}",
         srt_rel=f"{prefix}/{gen_id}.srt",
         vtt_rel=f"{prefix}/{gen_id}.vtt",
         cues_rel=f"{prefix}/{gen_id}.cues.json",

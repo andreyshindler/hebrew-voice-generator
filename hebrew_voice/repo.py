@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from .db import connect, transaction
-from .models import Generation, Media, Render, Session, User
+from .models import Generation, Media, Render, Session, Transcription, User
 
 __all__ = [
     "create_user",
@@ -355,8 +355,8 @@ def insert_generation(db: Path, gen: Generation) -> None:
                 (id, user_id, created_at, title, text_raw, text_prepared, char_count,
                  voice, rate, pitch, volume, keep_niqqud, expand_symbols,
                  expand_abbreviations, expand_acronyms, audio_rel, srt_rel, vtt_rel,
-                 cues_rel, words_per_cue, audio_bytes, duration_ms, cue_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cues_rel, words_per_cue, audio_bytes, duration_ms, cue_count, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 gen.id, gen.user_id, gen.created_at, gen.title, gen.text_raw,
@@ -365,6 +365,7 @@ def insert_generation(db: Path, gen: Generation) -> None:
                 int(gen.expand_abbreviations), int(gen.expand_acronyms),
                 gen.audio_rel, gen.srt_rel, gen.vtt_rel, gen.cues_rel,
                 gen.words_per_cue, gen.audio_bytes, gen.duration_ms, gen.cue_count,
+                gen.source,
             ),
         )
 
@@ -581,6 +582,176 @@ def requeue_or_fail_running(db: Path, error: str) -> int:
 
 
 # --------------------------------------------------------------------------
+# Transcriptions
+# --------------------------------------------------------------------------
+
+
+def insert_transcription(db: Path, job: Transcription) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO transcriptions
+                (id, user_id, media_id, generation_id, created_at, started_at,
+                 finished_at, status, error, seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job.id, job.user_id, job.media_id, job.generation_id, job.created_at,
+                job.started_at, job.finished_at, job.status, job.error, job.seconds,
+            ),
+        )
+
+
+def get_transcription(db: Path, job_id: str, user_id: int) -> Optional[Transcription]:
+    """Fetch a job, scoped to its owner - ownership is part of the query."""
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT * FROM transcriptions WHERE id = ? AND user_id = ?", (job_id, user_id)
+        ).fetchone()
+    return Transcription.from_row(row) if row else None
+
+
+def has_active_transcription(db: Path, user_id: int) -> bool:
+    """Whether this account already has one in flight.
+
+    One at a time per account: the queue is shared and a single user should not
+    be able to fill it.
+    """
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM transcriptions "
+            " WHERE user_id = ? AND status IN ('queued', 'running') LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return row is not None
+
+
+def claim_next_transcription(db: Path) -> Optional[Transcription]:
+    """Take the oldest queued job and mark it running, atomically.
+
+    Mirrors :func:`claim_next_render`, including why the conditional UPDATE is
+    what makes it safe.
+    """
+    now = int(time.time())
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT * FROM transcriptions WHERE status = 'queued' "
+                " ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            cur = conn.execute(
+                "UPDATE transcriptions SET status = 'running', started_at = ? "
+                " WHERE id = ? AND status = 'queued'",
+                (now, row["id"]),
+            )
+            if not cur.rowcount:
+                return None
+            claimed = conn.execute(
+                "SELECT * FROM transcriptions WHERE id = ?", (row["id"],)
+            ).fetchone()
+    return Transcription.from_row(claimed) if claimed else None
+
+
+def finish_transcription(db: Path, job_id: str, *, generation_id: str, seconds: float) -> None:
+    """Attach the recording the job produced, and record what it really cost."""
+    with connect(db) as conn:
+        conn.execute(
+            """
+            UPDATE transcriptions
+               SET status = 'done', finished_at = ?, generation_id = ?, seconds = ?,
+                   error = NULL
+             WHERE id = ?
+            """,
+            (int(time.time()), generation_id, seconds, job_id),
+        )
+
+
+def fail_transcription(db: Path, job_id: str, error: str) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE transcriptions SET status = 'failed', finished_at = ?, error = ? "
+            " WHERE id = ?",
+            (int(time.time()), error[:500], job_id),
+        )
+
+
+def fail_running_transcriptions(db: Path, error: str) -> int:
+    """Clear out jobs left running by a process that went away.
+
+    Failed rather than requeued, for the same reason as renders: a recording
+    that killed the worker would otherwise come back every boot.
+    """
+    with connect(db) as conn:
+        cur = conn.execute(
+            "UPDATE transcriptions SET status = 'failed', finished_at = ?, error = ? "
+            " WHERE status = 'running'",
+            (int(time.time()), error),
+        )
+        return cur.rowcount or 0
+
+
+def reserve_transcription_quota(
+    db: Path, user_id: int, day: str, seconds: int, limit: int
+) -> Tuple[bool, int]:
+    """Atomically claim seconds of today's transcription allowance.
+
+    The caller only knows what the browser measured, so this is a reservation
+    against an estimate. :func:`settle_transcription_quota` corrects it once
+    the provider says how long the recording really was.
+    """
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT transcribed_seconds FROM usage_daily WHERE user_id = ? AND day = ?",
+                (user_id, day),
+            ).fetchone()
+            used = row[0] if row else 0
+            if used + seconds > limit:
+                return False, used
+            conn.execute(
+                """
+                INSERT INTO usage_daily
+                    (user_id, day, chars, requests, renders, transcribed_seconds)
+                VALUES (?, ?, 0, 0, 0, ?)
+                ON CONFLICT(user_id, day) DO UPDATE
+                    SET transcribed_seconds = transcribed_seconds + ?
+                """,
+                (user_id, day, seconds, seconds),
+            )
+            return True, used + seconds
+
+
+def refund_transcription_quota(db: Path, user_id: int, day: str, seconds: int) -> None:
+    """Give the allowance back when the job produced no subtitles."""
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE usage_daily "
+            "   SET transcribed_seconds = MAX(0, transcribed_seconds - ?) "
+            " WHERE user_id = ? AND day = ?",
+            (seconds, user_id, day),
+        )
+
+
+def settle_transcription_quota(db: Path, user_id: int, day: str, delta: int) -> None:
+    """Correct the reservation once the real duration is known.
+
+    ``delta`` is signed: the browser's estimate is advice, and a recording that
+    turned out longer should still be charged for what it was.
+    """
+    if not delta:
+        return
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE usage_daily "
+            "   SET transcribed_seconds = MAX(0, transcribed_seconds + ?) "
+            " WHERE user_id = ? AND day = ?",
+            (delta, user_id, day),
+        )
+
+
+# --------------------------------------------------------------------------
 # Media
 # --------------------------------------------------------------------------
 
@@ -789,5 +960,15 @@ def usage_today(db: Path, user_id: int, day: str) -> int:
     with connect(db) as conn:
         row = conn.execute(
             "SELECT chars FROM usage_daily WHERE user_id = ? AND day = ?", (user_id, day)
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def transcribed_today(db: Path, user_id: int, day: str) -> int:
+    """Seconds of audio charged to this account today."""
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT transcribed_seconds FROM usage_daily WHERE user_id = ? AND day = ?",
+            (user_id, day),
         ).fetchone()
     return row[0] if row else 0

@@ -195,6 +195,50 @@ MIGRATIONS: List[Tuple[int, str]] = [
         ALTER TABLE renders ADD COLUMN plan TEXT NOT NULL DEFAULT '{}';
         """,
     ),
+    (
+        7,
+        # Subtitles from a recording instead of from synthesis.
+        #
+        # A transcription becomes an ordinary generations row, because
+        # everything downstream of the word timings - the history, the subtitle
+        # endpoints, the density control, the video editor - already works off
+        # cues and an audio file and does not care where they came from. The
+        # source column is what lets the UI tell the two apart, since a
+        # transcription has no voice to show and no synthesis settings to
+        # restore.
+        #
+        # The transcriptions table exists because the job outlives no row
+        # otherwise: it is queued, claimed and may fail, and none of that
+        # belongs on a finished recording. generation_id stays null until the
+        # work succeeds, so a failed job never leaves a half-built recording in
+        # the history.
+        #
+        # Quota is seconds of audio rather than characters. There is no input
+        # text to count, and the provider bills by duration.
+        """
+        ALTER TABLE generations ADD COLUMN source TEXT NOT NULL DEFAULT 'tts';
+
+        CREATE TABLE transcriptions (
+            id            TEXT    PRIMARY KEY,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            media_id      TEXT    REFERENCES media(id) ON DELETE SET NULL,
+            generation_id TEXT    REFERENCES generations(id) ON DELETE SET NULL,
+            created_at    INTEGER NOT NULL,
+            started_at    INTEGER,
+            finished_at   INTEGER,
+            status        TEXT    NOT NULL,
+            error         TEXT,
+            seconds       REAL    NOT NULL DEFAULT 0
+        );
+
+        -- How the worker claims queued work, so a poll is not a table scan.
+        CREATE INDEX idx_transcriptions_status ON transcriptions(status, created_at);
+        CREATE INDEX idx_transcriptions_user_time
+            ON transcriptions(user_id, created_at DESC);
+
+        ALTER TABLE usage_daily ADD COLUMN transcribed_seconds INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 ]
 
 

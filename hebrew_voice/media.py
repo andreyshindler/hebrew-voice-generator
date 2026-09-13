@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-__all__ = ["MediaType", "sniff", "MEDIA_KINDS", "HEADER_BYTES"]
+__all__ = ["MediaType", "sniff", "mime_for_ext", "MEDIA_KINDS", "HEADER_BYTES"]
 
 #: Enough of the file to identify every type below. MP4's `ftyp` box sits at
 #: offset 4 and its brand runs to 12.
@@ -95,3 +95,26 @@ def sniff(head: bytes) -> Optional[MediaType]:
         return _VIDEO_MP4
 
     return None
+
+
+#: Every extension this module will ever store, by name. Serving a file needs
+#: the reverse of sniffing: the bytes were identified once, on upload, and what
+#: is left on disk is the extension we chose.
+_BY_EXT = {
+    t.ext: t
+    for t in (
+        _IMAGE_JPEG, _IMAGE_PNG, _IMAGE_GIF, _IMAGE_WEBP,
+        _VIDEO_MP4, _VIDEO_WEBM, _VIDEO_MOV,
+        _AUDIO_MP3, _AUDIO_M4A, _AUDIO_WAV, _AUDIO_OGG,
+    )
+}
+
+
+def mime_for_ext(ext: str) -> str:
+    """The content type for a file we stored under ``ext``.
+
+    Falls back to MP3, which is what every generation before transcription
+    existed was, and what an unknown extension is most likely to be.
+    """
+    found = _BY_EXT.get(ext.lstrip(".").lower())
+    return found.mime if found else "audio/mpeg"

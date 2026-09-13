@@ -55,9 +55,17 @@
       <span class="char-count" id="char-count">0</span>
       <div class="composer-meta-actions">
         <button type="button" class="link-btn" id="upload-btn">העלאת קובץ טקסט</button>
+        <!-- Hidden unless the server has a transcription provider. Shown here
+             because it is the other way to get a recording with subtitles: one
+             starts from text, the other from a voice. -->
+        <button type="button" class="link-btn" id="transcribe-btn" hidden>
+          תמלול הקלטה
+        </button>
         <button type="button" class="link-btn" id="clear-btn">ניקוי</button>
       </div>
+      <span class="transcribe-status" id="transcribe-status" aria-live="polite"></span>
       <input type="file" id="file-input" accept=".txt,text/plain" hidden>
+      <input type="file" id="transcribe-input" accept="audio/*,video/*" hidden>
     </div>
 
     <fieldset class="control-group">

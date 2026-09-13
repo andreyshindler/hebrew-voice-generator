@@ -732,6 +732,20 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* --------------------------------------------------------------- history */
 
+/* A transcription came from a recording, not a voice, so its badge is not a
+   voice name and should not look like one. */
+.voice-badge.is-transcript {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.transcribe-status {
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.transcribe-status:empty { display: none; }
+
 /* -------------------------------------------------------- video rendering */
 
 /* A full-width band under the grid: a timeline has to be wide to be worth

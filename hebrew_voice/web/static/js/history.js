@@ -85,9 +85,14 @@ export class History {
           [
             el("div", { class: "history-title", text: item.title, title: item.title }),
             el("div", { class: "history-meta" }, [
+              /* A transcription has no voice to name. The badge says where
+                 the recording came from instead of showing an empty tag. */
               el("span", {
-                class: "voice-badge",
-                text: this.voiceLabels[item.voice] || item.voice,
+                class: item.source === "transcription" ? "voice-badge is-transcript"
+                                                       : "voice-badge",
+                text: item.source === "transcription"
+                  ? "תמלול"
+                  : this.voiceLabels[item.voice] || item.voice,
               }),
               el("span", { text: formatDuration(item.duration) }),
               el("span", { text: relativeTime(item.created_at) }),
@@ -107,7 +112,11 @@ export class History {
             },
             [icon(ICONS.download)]
           ),
-          action("טעינת ההגדרות מחדש", ICONS.restore, () => this._restore(item)),
+          /* Nothing to restore from a transcription: there was no text typed
+             and no voice chosen, so the button would load an empty composer. */
+          item.source === "transcription"
+            ? null
+            : action("טעינת ההגדרות מחדש", ICONS.restore, () => this._restore(item)),
           action("מחיקה", ICONS.trash, () => this._remove(item), "btn-danger"),
         ]),
       ]

@@ -166,4 +166,7 @@ export const api = {
     request(`/api/generations/${id}/renders`, { method: "POST", body }),
   renders: (id) => request(`/api/generations/${id}/renders`),
   render: (renderId) => request(`/api/renders/${renderId}`),
+  transcribe: (mediaId) =>
+    request("/api/transcriptions", { method: "POST", body: { media_id: mediaId } }),
+  transcription: (jobId) => request(`/api/transcriptions/${jobId}`),
 };

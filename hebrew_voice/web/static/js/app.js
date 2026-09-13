@@ -8,6 +8,7 @@ import { Player } from "./player.js";
 import { EditPanel } from "./editing.js";
 import { Timeline } from "./media.js";
 import { Renders } from "./renders.js";
+import { Transcriber } from "./transcribe.js";
 import { $, formatNumber, toast } from "./ui.js";
 
 const bootstrap = JSON.parse($("#bootstrap").textContent);
@@ -31,6 +32,25 @@ const renders = new Renders({
   edit,
 });
 if (bootstrap.rendering && bootstrap.rendering.enabled) media.load();
+new Transcriber({
+  enabled: bootstrap.transcription && bootstrap.transcription.enabled,
+  maxSeconds: bootstrap.transcription && bootstrap.transcription.max_seconds,
+  /* A finished transcription is an ordinary recording, so it opens through
+     exactly the same path as one that was just synthesised. */
+  onDone: async (id) => {
+    try {
+      const generation = await api.generation(id);
+      player.show(generation, { autoplay: false });
+      renders.show(generation);
+      await history.load();
+      history.markCurrent(generation.id);
+      toast("התמלול מוכן", "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  },
+});
+
 const history = new History({
   voices: bootstrap.voices,
   onOpen: (generation, { autoplay }) => {

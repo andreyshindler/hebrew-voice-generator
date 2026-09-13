@@ -4,3 +4,7 @@ fastapi>=0.115
 uvicorn>=0.30
 jinja2>=3.1
 python-multipart>=0.0.9
+# Declared rather than inherited: edge-tts happens to pull it in, and both the
+# renderer client and the transcription client would break silently if that
+# ever stopped being true.
+aiohttp>=3.9

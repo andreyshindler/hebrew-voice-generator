@@ -16,8 +16,8 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 
-# Five runtime dependencies, all pure Python. Passwords use stdlib scrypt and
-# storage uses stdlib sqlite3, so the Docker image still needs no compiler.
+# Six runtime dependencies, all pure Python wheels. Passwords use stdlib scrypt
+# and storage uses stdlib sqlite3, so the Docker image still needs no compiler.
 dependencies = [
     "edge-tts>=7.2,<8",
     "fastapi>=0.115",
@@ -26,6 +26,10 @@ dependencies = [
     # Multipart form parsing, for photo and clip uploads. FastAPI refuses to
     # build an upload route without it.
     "python-multipart>=0.0.9",
+    # Declared rather than inherited. edge-tts happens to pull aiohttp in, but
+    # the renderer and transcription clients both import it directly, and would
+    # break silently the day that stopped being true.
+    "aiohttp>=3.9",
 ]
 
 [project.optional-dependencies]

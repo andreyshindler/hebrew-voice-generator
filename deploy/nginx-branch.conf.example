@@ -45,5 +45,9 @@ location /voice-gen-branch/ {
     # Audio and video are served with range support; don't buffer them whole.
     proxy_buffering off;
 
-    client_max_body_size 1m;
+    # Must be at least HV_MAX_UPLOAD_BYTES. Photos, clips and recordings are
+    # posted to /api/media, and nginx rejects an oversized body with a 413 the
+    # app never sees - so a cap below the app's own looks like a broken upload
+    # button with nothing in the logs.
+    client_max_body_size 64m;
 }

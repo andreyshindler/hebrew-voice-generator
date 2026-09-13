@@ -149,6 +149,28 @@ class Settings:
     #: How often the worker looks for queued jobs.
     render_poll_seconds: float = 2.0
 
+    # Transcription. Off unless a provider is configured, so an install
+    # without one behaves exactly as it did before.
+    #: Base URL of an OpenAI-compatible speech-to-text API, without the
+    #: trailing path - Groq and OpenAI both expose /audio/transcriptions under
+    #: one of these, which is why the provider is a setting and not code.
+    stt_url: str = ""
+    stt_key: str = ""
+    stt_model: str = "whisper-large-v3"
+    #: Told to the provider rather than detected. The app is Hebrew-only, and
+    #: letting Whisper guess is how a Hebrew recording comes back as Arabic.
+    stt_language: str = "he"
+    stt_timeout: float = 300.0
+    #: Seconds of audio per account per day. Transcription is billed by the
+    #: hour upstream, so this is the only thing standing between a shared
+    #: install and a surprising invoice.
+    daily_transcribe_seconds: int = 1800
+    #: Refuse a single recording longer than this.
+    max_transcribe_seconds: float = 600.0
+    max_concurrent_transcriptions: int = 1
+    #: How often the worker looks for queued jobs.
+    transcribe_poll_seconds: float = 2.0
+
     # Uploaded photos and clips, composited behind the captions.
     #: Largest single upload. Video reaches this far faster than photos do.
     max_upload_bytes: int = 64 * 1024 * 1024
@@ -224,6 +246,17 @@ class Settings:
         that can only fail.
         """
         return bool(self.render_url)
+
+    @property
+    def transcription_enabled(self) -> bool:
+        """True when a speech-to-text provider is configured.
+
+        Both halves are required: a URL without a key cannot authenticate, and
+        a key without a URL has nowhere to go. Gating on the pair means a
+        half-filled .env leaves the feature off rather than offering a button
+        that fails on the first click.
+        """
+        return bool(self.stt_url and self.stt_key)
 
     def verification_link(self, token: str) -> str:
         """The absolute URL that goes in the email.
@@ -309,6 +342,15 @@ class Settings:
             render_fps=_int(env, "HV_RENDER_FPS", 30),
             render_quality=(env.get("HV_RENDER_QUALITY") or "standard").lower(),
             render_poll_seconds=_float(env, "HV_RENDER_POLL_SECONDS", 2.0),
+            stt_url=(env.get("HV_STT_URL") or "").rstrip("/"),
+            stt_key=env.get("HV_STT_KEY") or "",
+            stt_model=env.get("HV_STT_MODEL") or "whisper-large-v3",
+            stt_language=env.get("HV_STT_LANGUAGE") or "he",
+            stt_timeout=_float(env, "HV_STT_TIMEOUT", 300.0),
+            daily_transcribe_seconds=_int(env, "HV_DAILY_TRANSCRIBE_SECONDS", 1800),
+            max_transcribe_seconds=_float(env, "HV_MAX_TRANSCRIBE_SECONDS", 600.0),
+            max_concurrent_transcriptions=_int(env, "HV_MAX_CONCURRENT_TRANSCRIPTIONS", 1),
+            transcribe_poll_seconds=_float(env, "HV_TRANSCRIBE_POLL_SECONDS", 2.0),
             max_upload_bytes=_int(env, "HV_MAX_UPLOAD_BYTES", 64 * 1024 * 1024),
             media_quota_bytes=_int(env, "HV_MEDIA_QUOTA_BYTES", 512 * 1024 * 1024),
             max_media_per_render=_int(env, "HV_MAX_MEDIA_PER_RENDER", 20),
@@ -401,6 +443,17 @@ class Settings:
                     f"HV_RENDER_SIZE must be one of {', '.join(sorted(RENDER_SIZES))}, "
                     f"got {self.render_size!r}"
                 )
+        if self.stt_url and not self.stt_key:
+            problems.append("HV_STT_URL is set but HV_STT_KEY is empty")
+        if self.transcription_enabled:
+            if self.max_concurrent_transcriptions < 1:
+                problems.append("HV_MAX_CONCURRENT_TRANSCRIPTIONS must be at least 1")
+            if self.daily_transcribe_seconds < 1:
+                problems.append("HV_DAILY_TRANSCRIBE_SECONDS must be at least 1")
+            if self.max_transcribe_seconds <= 0:
+                problems.append("HV_MAX_TRANSCRIBE_SECONDS must be positive")
+            if not self.stt_model:
+                problems.append("HV_STT_MODEL must not be empty")
         if problems:
             raise ValueError("invalid configuration: " + "; ".join(problems))
 

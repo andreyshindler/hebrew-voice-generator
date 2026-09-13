@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
 
+from .. import media as media_types
 from .. import repo, storage
 from ..config import Settings
 from ..errors import NotFound, UnprocessableEntity
@@ -119,10 +120,11 @@ def content_disposition(title: str, extension: str, *, attachment: bool) -> str:
     )
 
 
-@router.get("/{gen_id}/audio.mp3")
+@router.get("/{gen_id}/audio.{extension}")
 async def get_audio(
     request: Request,
     gen_id: str = Path(pattern=GENERATION_ID_RE),
+    extension: str = Path(pattern=r"^[a-z0-9]{2,5}$"),
     download: bool = Query(default=False),
     settings: Settings = Depends(get_settings),
     user: User = Depends(require_user),
@@ -131,14 +133,19 @@ async def get_audio(
     generation = await _load(settings, gen_id, user)
     if not generation.audio_rel:
         raise NotFound("This generation has no audio")
+    # The extension is part of the URL so the file downloads under a name that
+    # matches its contents. It has to agree with what is on disk, or a WAV
+    # would be served as audio/mpeg to anyone who guessed the other spelling.
+    if extension != generation.audio_ext:
+        raise NotFound("This generation has no audio in that format")
     path = storage.resolve_under(settings.data_dir, generation.audio_rel)
     return FileResponse(
         path,
-        media_type="audio/mpeg",
+        media_type=media_types.mime_for_ext(extension),
         headers={
             "Cache-Control": _IMMUTABLE,
             "Content-Disposition": content_disposition(
-                generation.title, "mp3", attachment=download
+                generation.title, extension, attachment=download
             ),
         },
     )

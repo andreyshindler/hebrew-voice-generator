@@ -42,6 +42,13 @@ async def index(request: Request, settings: Settings = Depends(get_settings)):
             "max_seconds": settings.max_render_seconds,
             "daily_quota": settings.daily_render_quota,
         },
+        # Same idea: without a provider there is nothing to offer, and the
+        # button is hidden rather than left to fail on the first click.
+        "transcription": {
+            "enabled": settings.transcription_enabled,
+            "max_seconds": settings.max_transcribe_seconds,
+            "daily_seconds": settings.daily_transcribe_seconds,
+        },
         "version": __version__,
     }
     return _templates(request).TemplateResponse(

@@ -33,6 +33,12 @@ it on a VPS and hand the URL to other people.
   in your history, without re-synthesising.
 - **Script upload** — drop a `.txt` file onto the text box; it's read in the browser and
   loaded into the editor, still editable before you generate.
+- **Subtitles from your own voice** — upload a recording or a clip you filmed and get the
+  same word-timed SRT and VTT back, without synthesising anything. It becomes an ordinary
+  recording in your history, so the density control and the video editor work on it
+  exactly as they do on a synthesised one. Off unless `HV_STT_URL` and `HV_STT_KEY` point
+  at an OpenAI-compatible transcription API; note that the recording is uploaded to
+  whichever provider you configure.
 - **History** — replay, re-download, or reload the settings of anything you made before.
 - **Accounts** — email and password in SQLite, signup gated behind an invite code
   *and* email confirmation: registering sends a Hebrew verification link, and the
@@ -41,10 +47,10 @@ it on a VPS and hand the URL to other people.
   server-wide concurrency cap, and automatic retention cleanup.
 - **A CLI** for scripting and for smoke-testing a fresh install.
 
-Five runtime dependencies, all pure Python: `edge-tts`, `fastapi`, `uvicorn`, `jinja2`,
-and `python-multipart` for uploads. Passwords use stdlib `hashlib.scrypt` and storage uses
-stdlib `sqlite3`, so there's no ORM, no password library, and nothing that needs a
-compiler.
+Six runtime dependencies, all pure-Python wheels: `edge-tts`, `fastapi`, `uvicorn`,
+`jinja2`, `python-multipart` for uploads, and `aiohttp` for the renderer and transcription
+clients. Passwords use stdlib `hashlib.scrypt` and storage uses stdlib `sqlite3`, so
+there's no ORM, no password library, and nothing that needs a compiler.
 
 ---
 

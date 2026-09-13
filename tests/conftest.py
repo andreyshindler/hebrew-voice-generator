@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from hebrew_voice import repo, synth
 from hebrew_voice.mailer import SmtpMailer
 from hebrew_voice.config import Settings
-from hebrew_voice.web import rendering
+from hebrew_voice.web import rendering, transcribing
 from hebrew_voice.web.app import create_app
 
 from . import fakes
@@ -40,6 +40,11 @@ def no_network(monkeypatch):
         raise AssertionError("a test tried to open a real SMTP connection")
 
     monkeypatch.setattr(SmtpMailer, "send", explode_smtp)
+
+    async def explode_stt(*args, **kwargs):
+        raise AssertionError("a test tried to make a live transcription call")
+
+    monkeypatch.setattr(transcribing, "_post_transcription", explode_stt)
 
 
 @pytest.fixture
@@ -157,6 +162,57 @@ def render_settings(settings) -> Settings:
             "render_size": "landscape",
         }
     )
+
+
+#: What a provider returns for a short Hebrew clip: the joined text, and one
+#: entry per word. Only these three fields are read.
+FAKE_WORDS = [
+    {"word": "\u05e9\u05dc\u05d5\u05dd", "start": 0.0, "end": 0.4},
+    {"word": "\u05e2\u05d5\u05dc\u05dd", "start": 0.5, "end": 1.1},
+]
+
+
+@pytest.fixture
+def stt_settings(render_settings) -> Settings:
+    """Settings with a transcription provider configured, but no worker."""
+    from dataclasses import replace as replace_settings
+
+    return replace_settings(
+        render_settings,
+        stt_url="https://stt.example/v1",
+        stt_key="test-key",
+        stt_model="whisper-large-v3",
+        daily_transcribe_seconds=600,
+        max_transcribe_seconds=300.0,
+    )
+
+
+@pytest.fixture
+def stt_client(stt_settings, monkeypatch):
+    """A logged-in client whose provider answers from FAKE_WORDS.
+
+    Both workers are stubbed out for the same reason the render worker is: they
+    would claim rows from their own event loop and race the assertions. Tests
+    drive the queue explicitly.
+    """
+    application = create_app(stt_settings)
+    application.state.mailer = fakes.RecordingMailer()
+
+    async def fake_post(settings, audio, filename, mime):
+        return {"text": "\u05e9\u05dc\u05d5\u05dd \u05e2\u05d5\u05dc\u05dd",
+                "words": list(FAKE_WORDS)}
+
+    async def no_worker(self):
+        return None
+
+    monkeypatch.setattr(transcribing, "_post_transcription", fake_post)
+    monkeypatch.setattr(transcribing.TranscribeWorker, "start", no_worker)
+    monkeypatch.setattr(transcribing.TranscribeWorker, "stop", no_worker)
+    monkeypatch.setattr(rendering.RenderWorker, "start", no_worker)
+    monkeypatch.setattr(rendering.RenderWorker, "stop", no_worker)
+    with TestClient(application) as client:
+        register_verified(client, stt_settings)
+        yield client
 
 
 @pytest.fixture
