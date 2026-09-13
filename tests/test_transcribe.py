@@ -293,3 +293,126 @@ class TestBrowserMeasurement:
         # Widened for blob: only - nothing else may load from anywhere.
         assert "script-src 'self';" in policy
         assert "connect-src 'self';" in policy
+
+
+@pytest.mark.anyio
+class TestCorrectingTheTranscript:
+    async def _transcribed(self, client, settings):
+        media = upload(client, MP3, "voice.mp3", duration=2.0).json()
+        job = start(client, media["id"]).json()
+        await drain(settings)
+        return client.get(f"/api/transcriptions/{job['id']}").json()["generation_id"]
+
+    def _edit(self, client, gen_id, text):
+        return client.patch(
+            f"/api/generations/{gen_id}/transcript",
+            json={"text": text},
+            headers=csrf(client),
+        )
+
+    async def test_a_correction_rewrites_the_subtitles(self, stt_client, stt_settings):
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        response = self._edit(stt_client, gen_id, "שלום חברים")
+        assert response.status_code == 200
+        assert response.json()["text"] == "שלום חברים"
+
+        srt = stt_client.get(f"/api/generations/{gen_id}/subtitles.srt").text
+        assert "חברים" in srt
+        assert "עולם" not in srt
+
+    async def test_the_word_that_did_not_change_keeps_its_timing(
+        self, stt_client, stt_settings
+    ):
+        """The whole point of aligning rather than re-spreading."""
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        before = stt_client.get(
+            f"/api/generations/{gen_id}/subtitles.srt?words=1"
+        ).text.splitlines()[1]
+        self._edit(stt_client, gen_id, "שלום חברים")
+        after = stt_client.get(
+            f"/api/generations/{gen_id}/subtitles.srt?words=1"
+        ).text.splitlines()[1]
+        assert before == after
+
+    async def test_the_stored_word_timings_are_rewritten_too(
+        self, stt_client, stt_settings
+    ):
+        """Not just the SRT: the video renderer reads the cue file."""
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        self._edit(stt_client, gen_id, "שלום חברים")
+        generation = repo.get_generation(stt_settings.db_path, gen_id, 1)
+        cues = load_cues(
+            storage.resolve_under(stt_settings.data_dir, generation.cues_rel).read_bytes()
+        )
+        assert [c.text for c in cues] == ["שלום", "חברים"]
+
+    async def test_the_audio_is_untouched(self, stt_client, stt_settings):
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        before = stt_client.get(f"/api/generations/{gen_id}").json()
+        self._edit(stt_client, gen_id, "שלום חברים")
+        after = stt_client.get(f"/api/generations/{gen_id}").json()
+        assert after["duration"] == before["duration"]
+        assert after["audio_bytes"] == before["audio_bytes"]
+
+    async def test_subtitles_of_a_transcript_are_not_served_immutable(
+        self, stt_client, stt_settings, fake_tts
+    ):
+        """An edit rewrites the file under an id that never changes.
+
+        Cached as immutable, a browser would keep showing the words the
+        recogniser got wrong however many times they were corrected.
+        """
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        response = stt_client.get(f"/api/generations/{gen_id}/subtitles.srt")
+        assert "immutable" not in response.headers["Cache-Control"]
+        # Synthesised subtitles cannot be edited, so they stay immutable.
+        from .test_renders import make_generation
+
+        synth_id = make_generation(stt_client)["id"]
+        synthesised = stt_client.get(f"/api/generations/{synth_id}/subtitles.srt")
+        assert "immutable" in synthesised.headers["Cache-Control"]
+
+    async def test_a_synthesised_recording_cannot_be_corrected(
+        self, stt_client, fake_tts
+    ):
+        """Its text is its input - editing here would leave the two disagreeing."""
+        from .test_renders import make_generation
+
+        generation = make_generation(stt_client)
+        response = self._edit(stt_client, generation["id"], "טקסט אחר")
+        assert response.status_code == 422
+        assert response.json()["error"]["code"] == "not_a_transcript"
+
+    async def test_an_empty_transcript_is_refused(self, stt_client, stt_settings):
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        assert self._edit(stt_client, gen_id, "   ").status_code == 422
+
+    async def test_correcting_the_words_discards_a_stale_video(
+        self, stt_client, stt_settings
+    ):
+        """The video has the old words burned into its frames."""
+        from .test_renders import drain as drain_renders
+
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        stt_client.post(
+            f"/api/generations/{gen_id}/renders",
+            json={"format": "mp4"},
+            headers=csrf(stt_client),
+        )
+        await drain_renders(stt_settings)
+        assert stt_client.get(f"/api/generations/{gen_id}/renders").json()["items"]
+
+        self._edit(stt_client, gen_id, "שלום חברים")
+        # Gone, so the dedupe cannot hand the old video back as if it were
+        # current.
+        assert stt_client.get(f"/api/generations/{gen_id}/renders").json()["items"] == []
+
+    async def test_correcting_costs_no_quota(self, stt_client, stt_settings):
+        """Nothing is synthesised and nothing is transcribed."""
+        from hebrew_voice.quota import quota_day
+
+        gen_id = await self._transcribed(stt_client, stt_settings)
+        day = quota_day(stt_settings.quota_tz)
+        before = repo.transcribed_today(stt_settings.db_path, 1, day)
+        self._edit(stt_client, gen_id, "שלום חברים ואחרים")
+        assert repo.transcribed_today(stt_settings.db_path, 1, day) == before

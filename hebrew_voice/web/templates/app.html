@@ -178,6 +178,25 @@
         </label>
       </div>
 
+      <!-- Only shown for a transcribed recording. Hebrew recognition gets
+           names, numbers and loanwords wrong, and every mistake would end up
+           burned into the video. -->
+      <div class="transcript-box" id="transcript-box" hidden>
+        <label class="transcript-label" for="transcript-text">תיקון התמלול</label>
+        <textarea id="transcript-text" dir="rtl" rows="4" spellcheck="false"></textarea>
+        <p class="transcript-note">
+          תיקון מילה שומר על התזמון שלה. כתיבה מחדש של משפט שלם תפרוס את הזמן
+          מחדש, ועלולה לצאת פחות מדויקת.
+        </p>
+        <div class="transcript-actions">
+          <button type="button" class="btn btn-primary" id="transcript-save" disabled>
+            עדכון כתוביות
+          </button>
+          <button type="button" class="link-btn" id="transcript-reset" hidden>ביטול</button>
+          <span class="transcript-status" id="transcript-status" aria-live="polite"></span>
+        </div>
+      </div>
+
       <div class="result-tabs">
         <button type="button" class="tab is-active" data-tab="prepared">טקסט מוקרא</button>
         <button type="button" class="tab" data-tab="cues">כתוביות</button>

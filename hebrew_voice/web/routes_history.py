@@ -7,10 +7,12 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import media as media_types
 from .. import repo, storage
+from ..aligning import realign, split_words
 from ..config import Settings
 from ..errors import NotFound, UnprocessableEntity
 from ..models import Generation, User
@@ -19,6 +21,7 @@ from ..synth import (
     MAX_WORDS_PER_CUE,
     READABLE_WORDS_PER_CUE,
     Cue,
+    dump_cues,
     group_cues,
     load_cues,
     to_srt,
@@ -34,6 +37,10 @@ router = APIRouter(
 
 #: Ids are opaque hex, so a cached artifact can never change under its URL.
 _IMMUTABLE = "private, max-age=31536000, immutable"
+
+#: A corrected transcript is meant to fix words, not to paste an essay over a
+#: recording. Well above anything a person would actually dictate.
+_MAX_TRANSCRIPT_WORDS = 5000
 
 #: Regrouped subtitles are computed from the query string, which breaks the
 #: premise above - the same URL path now has more than one right answer.
@@ -204,7 +211,11 @@ async def _serve_subtitles(
     """Serve subtitles, off disk when possible and recomputed when asked."""
     if not stored_rel:
         raise NotFound("This generation has no subtitles")
-    headers = {"Cache-Control": _IMMUTABLE}
+    # A transcript can be corrected, which rewrites these files in place. The
+    # id still never changes, so "immutable" would pin a browser to the words
+    # the recogniser got wrong and no edit would ever reach it.
+    editable = generation.source == "transcription"
+    headers = {"Cache-Control": _REVALIDATE if editable else _IMMUTABLE}
     if disposition:
         headers["Content-Disposition"] = disposition
 
@@ -297,3 +308,91 @@ async def delete_generation(
     )
     await run_in_threadpool(repo.delete_generation, settings.db_path, gen_id, user.id)
     return Response(status_code=204)
+
+
+class TranscriptEdit(BaseModel):
+    """The corrected words, as one block of text."""
+
+    text: str = Field(min_length=1)
+
+
+@router.patch("/{gen_id}/transcript", dependencies=[Depends(require_csrf)])
+async def edit_transcript(
+    payload: TranscriptEdit,
+    gen_id: str = Path(pattern=GENERATION_ID_RE),
+    settings: Settings = Depends(get_settings),
+    user: User = Depends(require_user),
+):
+    """Correct what the recogniser heard, and re-time the subtitles.
+
+    Costs no quota, for the same reason re-grouping does not: nothing is
+    synthesised and nothing is transcribed. The audio is untouched - only the
+    words laid over it change.
+    """
+    generation = await _load(settings, gen_id, user)
+    if generation.source != "transcription":
+        # A synthesised recording's text is its input. Editing it here would
+        # leave the words disagreeing with the audio, with no way back.
+        raise UnprocessableEntity(
+            "Only a transcribed recording can be corrected",
+            code="not_a_transcript",
+        )
+    if not generation.cues_rel:
+        raise UnprocessableEntity(
+            "This recording has no word timings to correct",
+            code="cues_unavailable",
+        )
+
+    words = split_words(payload.text)
+    if not words:
+        raise UnprocessableEntity("The transcript cannot be empty", code="empty_transcript")
+    if len(words) > _MAX_TRANSCRIPT_WORDS:
+        raise UnprocessableEntity(
+            f"A transcript cannot be longer than {_MAX_TRANSCRIPT_WORDS} words",
+            code="transcript_too_long",
+        )
+
+    cue_count = await run_in_threadpool(
+        _rewrite_transcript, settings, generation, words, payload.text
+    )
+    # Any video of this recording has the old words burned into its frames, so
+    # it no longer shows what the recording says. Collect the files before the
+    # rows go, or they are orphaned on disk.
+    stale = await run_in_threadpool(repo.render_video_paths, settings.db_path, [gen_id])
+    await run_in_threadpool(repo.delete_renders_for_generation, settings.db_path, gen_id)
+    if stale:
+        await run_in_threadpool(storage.delete_files, settings.data_dir, tuple(stale))
+    await run_in_threadpool(
+        repo.update_transcript,
+        settings.db_path,
+        gen_id,
+        user.id,
+        text=payload.text,
+        cue_count=cue_count,
+    )
+    refreshed = await _load(settings, gen_id, user)
+    return refreshed.public(full=True, base=settings.root_path)
+
+
+def _rewrite_transcript(
+    settings: Settings, generation: Generation, words: List[str], text: str
+) -> int:
+    """Re-time the words and rewrite all three subtitle files. Returns cues."""
+    path = storage.resolve_under(settings.data_dir, generation.cues_rel or "")
+    try:
+        previous = load_cues(path.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise UnprocessableEntity(
+            "The stored word timings could not be read", code="cues_unavailable"
+        ) from exc
+
+    aligned = realign(previous, words, duration=generation.duration)
+    grouped = group_cues(aligned, words_per_cue=generation.words_per_cue)
+    # All three are written from the same aligned list, so the file the video
+    # renderer reads and the file the user downloads cannot disagree.
+    storage.write_bytes(settings.data_dir, generation.cues_rel, dump_cues(aligned).encode("utf-8"))
+    if generation.srt_rel:
+        storage.write_bytes(settings.data_dir, generation.srt_rel, to_srt(grouped).encode("utf-8"))
+    if generation.vtt_rel:
+        storage.write_bytes(settings.data_dir, generation.vtt_rel, to_vtt(grouped).encode("utf-8"))
+    return len(grouped)

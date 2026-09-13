@@ -169,4 +169,6 @@ export const api = {
   transcribe: (mediaId) =>
     request("/api/transcriptions", { method: "POST", body: { media_id: mediaId } }),
   transcription: (jobId) => request(`/api/transcriptions/${jobId}`),
+  editTranscript: (id, text) =>
+    request(`/api/generations/${id}/transcript`, { method: "PATCH", body: { text } }),
 };

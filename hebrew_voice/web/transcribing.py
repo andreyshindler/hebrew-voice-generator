@@ -199,7 +199,10 @@ def _store(
     storage.write_bytes(settings.data_dir, paths.vtt_rel, to_vtt(cues).encode("utf-8"))
     storage.write_bytes(settings.data_dir, paths.cues_rel, dump_cues(words).encode("utf-8"))
 
-    title = media.original_name or text[:60] or "תמלול"
+    # Without the extension: the title becomes the downloaded subtitle's
+    # filename, and "voice.wav.srt" reads as a mistake.
+    stem = Path(media.original_name).stem if media.original_name else ""
+    title = stem or text[:60] or "תמלול"
     repo.insert_generation(
         settings.db_path,
         Generation(

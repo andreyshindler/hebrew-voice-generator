@@ -732,6 +732,43 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* --------------------------------------------------------------- history */
 
+/* ------------------------------------------------------ transcript editor */
+
+.transcript-box {
+  margin-block-start: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.transcript-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-muted);
+  margin-block-end: 6px;
+}
+.transcript-box textarea {
+  resize: vertical;
+  min-block-size: 84px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.transcript-note {
+  margin: 8px 0 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+.transcript-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.transcript-actions .btn { padding: 7px 14px; font-size: 13.5px; }
+.transcript-status { font-size: 12px; color: var(--text-faint); }
+
 /* A transcription came from a recording, not a voice, so its badge is not a
    voice name and should not look like one. */
 .voice-badge.is-transcript {

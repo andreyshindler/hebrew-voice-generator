@@ -468,6 +468,18 @@ def renders_for_generation(db: Path, gen_id: str) -> List[Render]:
     return [Render.from_row(row) for row in rows]
 
 
+def delete_renders_for_generation(db: Path, gen_id: str) -> None:
+    """Drop every render of a recording.
+
+    Used when the words change under them: a finished video has the old
+    transcript burned into its pictures, so it no longer shows what the
+    recording says. Leaving the rows would also let the dedupe hand that stale
+    video back as if it were current.
+    """
+    with connect(db) as conn:
+        conn.execute("DELETE FROM renders WHERE generation_id = ?", (gen_id,))
+
+
 def render_video_paths(db: Path, gen_ids: Sequence[str]) -> List[str]:
     """Every stored video file for these generations.
 
@@ -599,6 +611,26 @@ def insert_transcription(db: Path, job: Transcription) -> None:
                 job.id, job.user_id, job.media_id, job.generation_id, job.created_at,
                 job.started_at, job.finished_at, job.status, job.error, job.seconds,
             ),
+        )
+
+
+def update_transcript(
+    db: Path, gen_id: str, user_id: int, *, text: str, cue_count: int
+) -> None:
+    """Record corrected words against a recording.
+
+    Only the text and the cue count move: the audio, its length and its
+    artifact paths are unchanged, because correcting a word does not change
+    what was said.
+    """
+    with connect(db) as conn:
+        conn.execute(
+            """
+            UPDATE generations
+               SET text_raw = ?, text_prepared = ?, char_count = ?, cue_count = ?
+             WHERE id = ? AND user_id = ?
+            """,
+            (text, text, len(text), cue_count, gen_id, user_id),
         )
 
 
