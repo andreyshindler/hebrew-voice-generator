@@ -61,9 +61,39 @@
         <button type="button" class="link-btn" id="transcribe-btn" hidden>
           תמלול הקלטה
         </button>
+        <!-- Hidden without a transcription provider, and also without a
+             microphone: getUserMedia exists only in a secure context, so over
+             plain HTTP the button would be there and never work. -->
+        <button type="button" class="link-btn" id="record-btn" hidden>
+          הקלטה מהמיקרופון
+        </button>
         <button type="button" class="link-btn" id="clear-btn">ניקוי</button>
       </div>
       <span class="transcribe-status" id="transcribe-status" aria-live="polite"></span>
+
+      <!-- Nothing is uploaded until the take is confirmed: a false start
+           should cost no storage and no transcription quota. -->
+      <div class="record-box" id="record-box" hidden>
+        <div class="record-head">
+          <span class="record-dot" aria-hidden="true"></span>
+          <span class="record-clock" id="record-clock" dir="ltr">0:00</span>
+          <div class="record-level" aria-hidden="true">
+            <div class="record-level-fill" id="record-meter"></div>
+          </div>
+        </div>
+        <div class="record-preview" id="record-preview"></div>
+        <p class="record-hint" id="record-hint" aria-live="polite"></p>
+        <div class="record-actions">
+          <button type="button" class="btn btn-primary" id="record-stop">עצירה</button>
+          <button type="button" class="btn btn-primary" id="record-keep" hidden>
+            תמלול ההקלטה
+          </button>
+          <button type="button" class="btn btn-ghost" id="record-again" hidden>
+            הקלטה מחדש
+          </button>
+          <button type="button" class="link-btn" id="record-cancel">ביטול</button>
+        </div>
+      </div>
       <input type="file" id="file-input" accept=".txt,text/plain" hidden>
       <input type="file" id="transcribe-input" accept="audio/*,video/*" hidden>
     </div>

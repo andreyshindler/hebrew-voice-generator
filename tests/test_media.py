@@ -89,6 +89,74 @@ class TestSniffing:
         assert media_types.sniff(head) is None
 
 
+#: What a browser actually writes when it records the microphone. The byte
+#: offsets are the ones measured from Chromium: the Opus CodecID lands around
+#: byte 220 of a WebM, and an MP4's `hdlr` box around 332 with its handler type
+#: twelve bytes further on. Both are far past where any magic number lives,
+#: which is the whole reason this needs a wider window than it used to.
+EBML = b"\x1a\x45\xdf\xa3"
+VOICE_WEBM = EBML + b"\x00" * 216 + b"A_OPUS" + b"\x00" * 64
+SCREEN_WEBM = EBML + b"\x00" * 216 + b"A_OPUS" + b"\x00" * 40 + b"V_VP9" + b"\x00" * 64
+
+
+def _iso(*handlers: bytes, brand: bytes = b"isom") -> bytes:
+    """An MP4 header carrying one `hdlr` box per handler type given."""
+    out = b"\x00\x00\x00\x20ftyp" + brand + b"\x00" * 300
+    for handler in handlers:
+        out += b"hdlr" + b"\x00" * 8 + handler + b"\x00" * 40
+    return out
+
+
+class TestRecordingsAreNotVideo:
+    """A voice memo and a screen recording are the same container.
+
+    A browser records the microphone to WebM or MP4 - the identical magic
+    numbers a film has - so the container cannot answer the question and the
+    track list has to. Getting this wrong is quiet: the recording transcribes
+    perfectly well and then turns up as a silent black clip in the shot list.
+    """
+
+    def test_a_browser_voice_recording_is_audio(self):
+        found = media_types.sniff(VOICE_WEBM)
+        assert found.kind == "audio"
+        assert found.mime == "audio/webm"
+
+    def test_a_safari_voice_recording_is_audio(self):
+        found = media_types.sniff(_iso(b"soun"))
+        assert found.kind == "audio"
+        assert found.mime == "audio/mp4"
+
+    def test_a_webm_with_pictures_is_still_video(self):
+        assert media_types.sniff(SCREEN_WEBM).kind == "video"
+
+    def test_an_mp4_with_pictures_is_still_video(self):
+        assert media_types.sniff(_iso(b"soun", b"vide")).kind == "video"
+        assert media_types.sniff(_iso(b"vide", b"soun")).kind == "video"
+
+    def test_a_file_whose_tracks_are_out_of_reach_stays_video(self):
+        """Many real videos put their `moov` at the end of the file.
+
+        Absence of evidence is not evidence of audio: guessing that way would
+        quietly drop someone's clip out of their reel.
+        """
+        assert media_types.sniff(EBML + b"\x00" * 64).kind == "video"
+        assert media_types.sniff(_iso()).kind == "video"
+
+    def test_the_handler_type_is_read_at_its_offset_not_searched_for(self):
+        """`soun` loose in the bytes is not a handler box.
+
+        It can fall anywhere - inside a codec name, or in the audio itself.
+        Only twelve bytes past an `hdlr` does it mean anything.
+        """
+        loose = b"\x00\x00\x00\x20ftypisom" + b"\x00" * 100 + b"soun" + b"\x00" * 200
+        assert media_types.sniff(loose).kind == "video"
+
+    def test_an_m4a_brand_still_short_circuits(self):
+        """Music files say what they are in the brand; no track list needed."""
+        found = media_types.sniff(b"\x00\x00\x00\x20ftypM4A " + b"\x00" * 20)
+        assert found.kind == "audio"
+
+
 class TestUpload:
     def test_stores_a_photo(self, render_client):
         response = upload(render_client, JPEG, "beach.jpg")

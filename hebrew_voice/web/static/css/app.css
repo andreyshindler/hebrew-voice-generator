@@ -732,6 +732,82 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* --------------------------------------------------------------- history */
 
+/* ------------------------------------------------------------- recorder */
+
+.record-box {
+  flex-basis: 100%;
+  margin-block-start: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.record-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Only lit while the microphone is actually open, so it answers "is this
+   thing on" without reading anything. */
+.record-dot {
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 50%;
+  background: var(--border-strong);
+  flex: none;
+}
+.record-box.is-recording .record-dot {
+  background: var(--danger);
+  animation: record-pulse 1.4s ease-in-out infinite;
+}
+@keyframes record-pulse {
+  50% { opacity: .35; }
+}
+
+.record-clock {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.record-level {
+  flex: 1;
+  block-size: 6px;
+  border-radius: 99px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.record-level-fill {
+  block-size: 100%;
+  background: var(--accent);
+  /* Scaled from the inline start so it grows the way the text reads. */
+  transform-origin: inline-start;
+  transform: scaleX(0);
+  transition: transform .08s linear;
+}
+
+.record-preview { margin-block-start: 10px; }
+.record-preview:empty { display: none; }
+.record-preview audio { inline-size: 100%; display: block; }
+
+.record-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--warn);
+}
+.record-hint:empty { display: none; }
+
+.record-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-block-start: 10px;
+}
+.record-actions .btn { padding: 7px 14px; font-size: 13.5px; }
+
 /* ------------------------------------------------------ transcript editor */
 
 .transcript-box {

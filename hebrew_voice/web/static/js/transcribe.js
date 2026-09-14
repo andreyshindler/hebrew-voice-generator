@@ -48,14 +48,22 @@ export class Transcriber {
     const file = (this.input.files || [])[0];
     this.input.value = "";
     if (!file) return;
+    /* Measure here for the same reason the timeline does: this image has no
+       media tools, so the server cannot work out how long a clip is. It only
+       sizes the quota reservation - the provider returns the real duration and
+       the charge is corrected then. */
+    await this.submit(file, await durationOf(file));
+  }
 
+  /** Upload something and transcribe it. The recorder comes in here too.
+   *
+   * A recording arrives with its length already known - it was timed as it was
+   * made - so the caller passes it rather than making this measure a blob it
+   * would have to decode first.
+   */
+  async submit(file, seconds) {
     this._busy(true);
     try {
-      /* Measure here for the same reason the timeline does: this image has no
-         media tools, so the server cannot work out how long a clip is. It only
-         sizes the quota reservation - the provider returns the real duration
-         and the charge is corrected then. */
-      const seconds = await durationOf(file);
       if (this.maxSeconds && seconds > this.maxSeconds) {
         throw new Error(
           `ההקלטה ארוכה מ‑${Math.round(this.maxSeconds / 60)} דקות`

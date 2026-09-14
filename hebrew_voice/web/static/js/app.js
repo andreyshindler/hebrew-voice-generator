@@ -8,6 +8,7 @@ import { Player } from "./player.js";
 import { EditPanel } from "./editing.js";
 import { Timeline } from "./media.js";
 import { Renders } from "./renders.js";
+import { Recorder } from "./recorder.js";
 import { Transcriber } from "./transcribe.js";
 import { TranscriptEditor } from "./transcript.js";
 import { $, formatNumber, toast } from "./ui.js";
@@ -51,7 +52,7 @@ function openGeneration(generation, { autoplay = false } = {}) {
   transcript.show(generation);
 }
 
-new Transcriber({
+const transcriber = new Transcriber({
   enabled: bootstrap.transcription && bootstrap.transcription.enabled,
   maxSeconds: bootstrap.transcription && bootstrap.transcription.max_seconds,
   /* A finished transcription is an ordinary recording, so it opens through
@@ -67,6 +68,15 @@ new Transcriber({
       toast(error.message, "error");
     }
   },
+});
+
+new Recorder({
+  enabled: bootstrap.transcription && bootstrap.transcription.enabled,
+  maxSeconds: bootstrap.transcription && bootstrap.transcription.max_seconds,
+  /* A finished take is an upload like any other from here on, so it goes
+     through exactly the path a chosen file does. It arrives with its length
+     already known, because it was timed while it was being made. */
+  onTake: (file, seconds) => transcriber.submit(file, seconds),
 });
 
 const history = new History({

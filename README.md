@@ -33,8 +33,11 @@ it on a VPS and hand the URL to other people.
   in your history, without re-synthesising.
 - **Script upload** — drop a `.txt` file onto the text box; it's read in the browser and
   loaded into the editor, still editable before you generate.
-- **Subtitles from your own voice** — upload a recording or a clip you filmed and get the
-  same word-timed SRT and VTT back, without synthesising anything. It becomes an ordinary
+- **Subtitles from your own voice** — record straight from the microphone, or upload a
+  recording or a clip you filmed, and get the same word-timed SRT and VTT back without
+  synthesising anything. The recorder shows a live level meter, stops itself at the
+  configured limit, and lets you hear a take back before anything is uploaded — a false
+  start costs no storage and no transcription quota. It becomes an ordinary
   recording in your history, so the density control and the video editor work on it
   exactly as they do on a synthesised one. Off unless `HV_STT_URL` and `HV_STT_KEY` point
   at an OpenAI-compatible transcription API; note that the recording is uploaded to
