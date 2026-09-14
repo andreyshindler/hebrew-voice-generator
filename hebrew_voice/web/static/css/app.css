@@ -420,6 +420,10 @@ input:focus, textarea:focus {
   align-items: center;
   gap: 12px;
   margin-block: 10px 20px;
+  /* The status line and the recorder both ask for a full row via
+     flex-basis: 100%, which without this just makes them fight the buttons
+     for width instead of dropping below them. */
+  flex-wrap: wrap;
 }
 .composer-meta-actions { margin-inline-start: auto; display: flex; gap: 4px; }
 
