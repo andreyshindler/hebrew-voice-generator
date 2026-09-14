@@ -20,16 +20,34 @@ from .. import cleanup, db, storage
 from ..mailer import mailer_from_settings
 from ..config import Settings, get_settings as load_settings
 from ..errors import AppError, Unauthorized
-from . import routes_auth, routes_history, routes_pages, routes_synth
+from . import (
+    routes_auth,
+    routes_history,
+    routes_media,
+    routes_pages,
+    routes_renders,
+    routes_synth,
+    routes_transcribe,
+)
+from .rendering import RenderWorker
+from .transcribing import TranscribeWorker
 from .runner import SynthRunner
 
 log = logging.getLogger("hebrew_voice.web")
 
 HERE = Path(__file__).parent
 
+# blob: is in media-src and img-src because the browser measures an upload
+# before sending it - this image has no media tools, so how long a clip runs is
+# something only the page can find out, by pointing an element at a blob URL of
+# the file the user just chose. A blob URL is same-origin by construction and
+# only ever names bytes the page already holds, so it widens nothing. Without
+# it the measurement fails silently and every upload reports a duration of
+# zero, which is the number the quota is reserved against.
 CSP = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-    "media-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; "
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; "
+    "connect-src 'self'; form-action 'self'; "
     "frame-ancestors 'none'; base-uri 'none'"
 )
 
@@ -56,6 +74,19 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             type(app.state.mailer).__name__,
         )
         task = asyncio.create_task(_cleanup_loop(settings))
+        workers = []
+        if settings.rendering_enabled:
+            worker = RenderWorker(settings)
+            app.state.render_worker = worker
+            workers.append(worker)
+            await worker.start()
+            log.info("video rendering via %s", settings.render_url)
+        if settings.transcription_enabled:
+            transcriber = TranscribeWorker(settings)
+            app.state.transcribe_worker = transcriber
+            workers.append(transcriber)
+            await transcriber.start()
+            log.info("transcription via %s (%s)", settings.stt_url, settings.stt_model)
         try:
             yield
         finally:
@@ -64,6 +95,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 await task
             except (asyncio.CancelledError, Exception):  # noqa: BLE001
                 pass
+            for worker in workers:
+                await worker.stop()
 
     app = FastAPI(
         title="Hebrew Voice Generator",
@@ -86,6 +119,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(routes_auth.router)
     app.include_router(routes_synth.router)
     app.include_router(routes_history.router)
+    app.include_router(routes_renders.router)
+    app.include_router(routes_media.router)
+    app.include_router(routes_transcribe.router)
 
     _install_middleware(app, settings)
     _install_error_handlers(app, settings)

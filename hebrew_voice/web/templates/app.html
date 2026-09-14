@@ -55,9 +55,47 @@
       <span class="char-count" id="char-count">0</span>
       <div class="composer-meta-actions">
         <button type="button" class="link-btn" id="upload-btn">העלאת קובץ טקסט</button>
+        <!-- Hidden unless the server has a transcription provider. Shown here
+             because it is the other way to get a recording with subtitles: one
+             starts from text, the other from a voice. -->
+        <button type="button" class="link-btn" id="transcribe-btn" hidden>
+          תמלול הקלטה
+        </button>
+        <!-- Hidden without a transcription provider, and also without a
+             microphone: getUserMedia exists only in a secure context, so over
+             plain HTTP the button would be there and never work. -->
+        <button type="button" class="link-btn" id="record-btn" hidden>
+          הקלטה מהמיקרופון
+        </button>
         <button type="button" class="link-btn" id="clear-btn">ניקוי</button>
       </div>
+      <span class="transcribe-status" id="transcribe-status" aria-live="polite"></span>
+
+      <!-- Nothing is uploaded until the take is confirmed: a false start
+           should cost no storage and no transcription quota. -->
+      <div class="record-box" id="record-box" hidden>
+        <div class="record-head">
+          <span class="record-dot" aria-hidden="true"></span>
+          <span class="record-clock" id="record-clock" dir="ltr">0:00</span>
+          <div class="record-level" aria-hidden="true">
+            <div class="record-level-fill" id="record-meter"></div>
+          </div>
+        </div>
+        <div class="record-preview" id="record-preview"></div>
+        <p class="record-hint" id="record-hint" aria-live="polite"></p>
+        <div class="record-actions">
+          <button type="button" class="btn btn-primary" id="record-stop">עצירה</button>
+          <button type="button" class="btn btn-primary" id="record-keep" hidden>
+            תמלול ההקלטה
+          </button>
+          <button type="button" class="btn btn-ghost" id="record-again" hidden>
+            הקלטה מחדש
+          </button>
+          <button type="button" class="link-btn" id="record-cancel">ביטול</button>
+        </div>
+      </div>
       <input type="file" id="file-input" accept=".txt,text/plain" hidden>
+      <input type="file" id="transcribe-input" accept="audio/*,video/*" hidden>
     </div>
 
     <fieldset class="control-group">
@@ -170,6 +208,25 @@
         </label>
       </div>
 
+      <!-- Only shown for a transcribed recording. Hebrew recognition gets
+           names, numbers and loanwords wrong, and every mistake would end up
+           burned into the video. -->
+      <div class="transcript-box" id="transcript-box" hidden>
+        <label class="transcript-label" for="transcript-text">תיקון התמלול</label>
+        <textarea id="transcript-text" dir="rtl" rows="4" spellcheck="false"></textarea>
+        <p class="transcript-note">
+          תיקון מילה שומר על התזמון שלה. כתיבה מחדש של משפט שלם תפרוס את הזמן
+          מחדש, ועלולה לצאת פחות מדויקת.
+        </p>
+        <div class="transcript-actions">
+          <button type="button" class="btn btn-primary" id="transcript-save" disabled>
+            עדכון כתוביות
+          </button>
+          <button type="button" class="link-btn" id="transcript-reset" hidden>ביטול</button>
+          <span class="transcript-status" id="transcript-status" aria-live="polite"></span>
+        </div>
+      </div>
+
       <div class="result-tabs">
         <button type="button" class="tab is-active" data-tab="prepared">טקסט מוקרא</button>
         <button type="button" class="tab" data-tab="cues">כתוביות</button>
@@ -188,6 +245,96 @@
     </section>
   </aside>
 </main>
+
+<!-- Its own band below the grid, not a third cell in it: a timeline in a 420px
+     sidebar is a strip of thumbnails, not something you can read the cut off.
+     Outside .layout because the sidebar is sticky, and a sticky column slides
+     over anything sharing its grid. Gated twice - hidden when the server has no
+     renderer, and again for recordings that predate word timings. -->
+<div class="editor-band">
+  <section class="panel editor" id="render-box" aria-labelledby="editor-title" hidden>
+    <div class="editor-head">
+      <h2 class="panel-title" id="editor-title">עריכת וידאו</h2>
+      <div class="editor-actions">
+        <select id="render-format">
+          <option value="mp4">סרטון עם כתוביות</option>
+          <option value="webm">שכבת כתוביות שקופה</option>
+        </select>
+        <select id="render-size">
+          <option value="vertical" selected>אנכי 9:16</option>
+          <option value="square">ריבוע 1:1</option>
+          <option value="landscape">רוחב 16:9</option>
+        </select>
+        <label class="btn btn-ghost btn-upload" for="media-input">הוספת מדיה</label>
+        <input type="file" id="media-input" accept="image/*,video/*,audio/*" multiple hidden>
+        <button type="button" class="btn btn-primary" id="render-go">צור וידאו</button>
+      </div>
+    </div>
+
+    <div class="timeline" id="timeline">
+      <div class="tl-ruler" id="tl-ruler"></div>
+      <div class="tl-track" id="tl-track"></div>
+      <p class="tl-empty" id="tl-empty">
+        הוסיפו תמונות או סרטונים כדי לבנות את הסרטון. בלי מדיה ייווצר סרטון כתוביות בלבד.
+      </p>
+    </div>
+
+    <div class="editor-grid">
+      <div class="editor-col">
+        <h3 class="editor-sub">כתוביות</h3>
+        <div class="edit-grid">
+          <label for="cap-scale">גודל</label>
+          <input type="range" id="cap-scale" min="0.6" max="1.8" step="0.1" value="1">
+          <label for="cap-position">מיקום</label>
+          <select id="cap-position">
+            <option value="bottom" selected>למטה</option>
+            <option value="middle">באמצע</option>
+            <option value="top">למעלה</option>
+          </select>
+          <label for="cap-color">צבע</label>
+          <input type="color" id="cap-color" value="#ffffff">
+        </div>
+        <div class="edit-toggles">
+          <label class="caption-check">
+            <input type="checkbox" id="cap-karaoke">
+            <span>הדגשת המילה הנאמרת</span>
+          </label>
+          <label class="caption-check">
+            <input type="checkbox" id="cap-box">
+            <span>רקע מאחורי הכתוביות</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="editor-col">
+        <h3 class="editor-sub">תנועה ומוזיקה</h3>
+        <div class="edit-grid">
+          <label for="music-select">מוזיקת רקע</label>
+          <select id="music-select"><option value="">ללא</option></select>
+          <label for="music-volume">עוצמה</label>
+          <input type="range" id="music-volume" min="0" max="0.6" step="0.05" value="0.15">
+        </div>
+        <div class="edit-toggles">
+          <label class="caption-check">
+            <input type="checkbox" id="motion-zoom" checked>
+            <span>זום איטי על תמונות</span>
+          </label>
+          <label class="caption-check">
+            <input type="checkbox" id="motion-fade" checked>
+            <span>מעבר רך בין קטעים</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="editor-col">
+        <h3 class="editor-sub">הפלט</h3>
+        <p class="render-note" id="render-note"></p>
+        <div class="render-result" id="render-result" hidden></div>
+        <p class="media-hint" id="media-hint"></p>
+      </div>
+    </div>
+  </section>
+</div>
 {% endblock %}
 
 {% block scripts %}

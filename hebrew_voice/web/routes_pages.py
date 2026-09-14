@@ -35,6 +35,20 @@ async def index(request: Request, settings: Settings = Depends(get_settings)):
         "csrf_token": session.csrf_token,
         "voices": catalog(),
         "limits": {"max_chars": settings.max_chars, **quota.public()},
+        # Without a renderer the card hides the whole section rather than
+        # offering a button whose only outcome is an error.
+        "rendering": {
+            "enabled": settings.rendering_enabled,
+            "max_seconds": settings.max_render_seconds,
+            "daily_quota": settings.daily_render_quota,
+        },
+        # Same idea: without a provider there is nothing to offer, and the
+        # button is hidden rather than left to fail on the first click.
+        "transcription": {
+            "enabled": settings.transcription_enabled,
+            "max_seconds": settings.max_transcribe_seconds,
+            "daily_seconds": settings.daily_transcribe_seconds,
+        },
         "version": __version__,
     }
     return _templates(request).TemplateResponse(

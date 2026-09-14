@@ -115,6 +115,130 @@ MIGRATIONS: List[Tuple[int, str]] = [
         ALTER TABLE generations ADD COLUMN words_per_cue INTEGER NOT NULL DEFAULT 7;
         """,
     ),
+    (
+        4,
+        # Rendered videos. A render is parameterised - format, caption density,
+        # frame size - so one generation can have several, which is why these
+        # are rows rather than columns on generations.
+        #
+        # The row is created queued and a background worker moves it through
+        # running to done or failed; video_rel is only set on success.
+        """
+        CREATE TABLE renders (
+            id            TEXT    PRIMARY KEY,
+            generation_id TEXT    NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at    INTEGER NOT NULL,
+            started_at    INTEGER NOT NULL DEFAULT 0,
+            finished_at   INTEGER NOT NULL DEFAULT 0,
+            status        TEXT    NOT NULL,
+            error         TEXT,
+            format        TEXT    NOT NULL,
+            words_per_cue INTEGER NOT NULL,
+            width         INTEGER NOT NULL,
+            height        INTEGER NOT NULL,
+            fps           INTEGER NOT NULL,
+            video_rel     TEXT,
+            video_bytes   INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_renders_generation ON renders(generation_id);
+        CREATE INDEX idx_renders_user_time  ON renders(user_id, created_at DESC);
+        -- How the worker claims queued work, so a poll is not a table scan.
+        CREATE INDEX idx_renders_status     ON renders(status, created_at);
+
+        -- Renders cost far more than synthesis, so they are metered apart
+        -- from the character quota.
+        ALTER TABLE usage_daily ADD COLUMN renders INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
+    (
+        5,
+        # Uploaded photos and clips, to composite behind the captions.
+        #
+        # Owned by the user rather than by a recording: the same footage is
+        # reasonably used across several, and it is uploaded before anyone has
+        # decided which recording it belongs to.
+        #
+        # duration_ms is what the browser measured, not what we probed - the
+        # app image has no media tools - so it is layout advice and nothing
+        # more. It is never trusted for anything that matters.
+        """
+        CREATE TABLE media (
+            id            TEXT    PRIMARY KEY,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            created_at    INTEGER NOT NULL,
+            kind          TEXT    NOT NULL,
+            mime          TEXT    NOT NULL,
+            rel           TEXT    NOT NULL,
+            bytes         INTEGER NOT NULL DEFAULT 0,
+            duration_ms   INTEGER NOT NULL DEFAULT 0,
+            original_name TEXT    NOT NULL DEFAULT ''
+        );
+        CREATE INDEX idx_media_user_time ON media(user_id, created_at DESC);
+
+        -- The ordered ids this render composited, as JSON. Renders are
+        -- immutable once made, so there is nothing to join and nothing to keep
+        -- in step - and it doubles as part of the dedupe key.
+        ALTER TABLE renders ADD COLUMN media_ids TEXT NOT NULL DEFAULT '[]';
+        """,
+    ),
+    (
+        6,
+        # Everything else about how a render is cut, as one JSON blob: per-shot
+        # durations, caption styling, motion, music.
+        #
+        # A column per knob would mean a migration per knob, and these are
+        # presentation choices that only the composition reads - nothing joins
+        # or filters on them. The blob is also the dedupe key, so a render with
+        # different styling is correctly a different render.
+        """
+        ALTER TABLE renders ADD COLUMN plan TEXT NOT NULL DEFAULT '{}';
+        """,
+    ),
+    (
+        7,
+        # Subtitles from a recording instead of from synthesis.
+        #
+        # A transcription becomes an ordinary generations row, because
+        # everything downstream of the word timings - the history, the subtitle
+        # endpoints, the density control, the video editor - already works off
+        # cues and an audio file and does not care where they came from. The
+        # source column is what lets the UI tell the two apart, since a
+        # transcription has no voice to show and no synthesis settings to
+        # restore.
+        #
+        # The transcriptions table exists because the job outlives no row
+        # otherwise: it is queued, claimed and may fail, and none of that
+        # belongs on a finished recording. generation_id stays null until the
+        # work succeeds, so a failed job never leaves a half-built recording in
+        # the history.
+        #
+        # Quota is seconds of audio rather than characters. There is no input
+        # text to count, and the provider bills by duration.
+        """
+        ALTER TABLE generations ADD COLUMN source TEXT NOT NULL DEFAULT 'tts';
+
+        CREATE TABLE transcriptions (
+            id            TEXT    PRIMARY KEY,
+            user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            media_id      TEXT    REFERENCES media(id) ON DELETE SET NULL,
+            generation_id TEXT    REFERENCES generations(id) ON DELETE SET NULL,
+            created_at    INTEGER NOT NULL,
+            started_at    INTEGER,
+            finished_at   INTEGER,
+            status        TEXT    NOT NULL,
+            error         TEXT,
+            seconds       REAL    NOT NULL DEFAULT 0
+        );
+
+        -- How the worker claims queued work, so a poll is not a table scan.
+        CREATE INDEX idx_transcriptions_status ON transcriptions(status, created_at);
+        CREATE INDEX idx_transcriptions_user_time
+            ON transcriptions(user_id, created_at DESC);
+
+        ALTER TABLE usage_daily ADD COLUMN transcribed_seconds INTEGER NOT NULL DEFAULT 0;
+        """,
+    ),
 ]
 
 

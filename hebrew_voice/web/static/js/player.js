@@ -190,7 +190,10 @@ export class Player {
   }
 
   _renderDownloads() {
-    const links = [["MP3", `${this.current.urls.audio}?download=1`, true]];
+    /* Synthesis always makes an MP3; a transcribed recording keeps whatever
+       container it was uploaded in, so the label comes off the URL. */
+    const audioExt = (this.current.urls.audio.split(".").pop() || "mp3").toUpperCase();
+    const links = [[audioExt, `${this.current.urls.audio}?download=1`, true]];
     for (const kind of ["srt", "vtt"]) {
       const href = this._subtitleUrl(kind);
       if (href) links.push([kind.toUpperCase(), href, false]);

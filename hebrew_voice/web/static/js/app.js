@@ -5,6 +5,12 @@ import { api, url } from "./api.js";
 import { Composer } from "./composer.js";
 import { History } from "./history.js";
 import { Player } from "./player.js";
+import { EditPanel } from "./editing.js";
+import { Timeline } from "./media.js";
+import { Renders } from "./renders.js";
+import { Recorder } from "./recorder.js";
+import { Transcriber } from "./transcribe.js";
+import { TranscriptEditor } from "./transcript.js";
 import { $, formatNumber, toast } from "./ui.js";
 
 const bootstrap = JSON.parse($("#bootstrap").textContent);
@@ -14,10 +20,69 @@ const composer = new Composer({
   maxChars: bootstrap.limits.max_chars,
 });
 const player = new Player();
+const edit = new EditPanel({ onChange: () => renders.refresh() });
+const media = new Timeline({
+  /* A different set of shots, or a different order, is a different video - so
+     anything already shown no longer describes what the button would make. */
+  onChange: () => renders.refresh(),
+  onTracks: (tracks) => edit.setTracks(tracks),
+});
+const renders = new Renders({
+  enabled: bootstrap.rendering && bootstrap.rendering.enabled,
+  maxSeconds: bootstrap.rendering && bootstrap.rendering.max_seconds,
+  media,
+  edit,
+});
+if (bootstrap.rendering && bootstrap.rendering.enabled) media.load();
+const transcript = new TranscriptEditor({
+  /* Correcting the words changes the cue list, the subtitle downloads and what
+     a video of this recording would say, so everything showing it is redrawn. */
+  onSaved: (generation) => {
+    openGeneration(generation);
+    history.load();
+  },
+});
+
+/* Three panels describe the loaded recording, and they have to agree: the
+   player, the video editor and the transcript. One place to open a recording
+   is one place to keep them in step. */
+function openGeneration(generation, { autoplay = false } = {}) {
+  player.show(generation, { autoplay });
+  renders.show(generation);
+  transcript.show(generation);
+}
+
+const transcriber = new Transcriber({
+  enabled: bootstrap.transcription && bootstrap.transcription.enabled,
+  maxSeconds: bootstrap.transcription && bootstrap.transcription.max_seconds,
+  /* A finished transcription is an ordinary recording, so it opens through
+     exactly the same path as one that was just synthesised. */
+  onDone: async (id) => {
+    try {
+      const generation = await api.generation(id);
+      openGeneration(generation);
+      await history.load();
+      history.markCurrent(generation.id);
+      toast("התמלול מוכן", "ok");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  },
+});
+
+new Recorder({
+  enabled: bootstrap.transcription && bootstrap.transcription.enabled,
+  maxSeconds: bootstrap.transcription && bootstrap.transcription.max_seconds,
+  /* A finished take is an upload like any other from here on, so it goes
+     through exactly the path a chosen file does. It arrives with its length
+     already known, because it was timed while it was being made. */
+  onTake: (file, seconds) => transcriber.submit(file, seconds),
+});
+
 const history = new History({
   voices: bootstrap.voices,
   onOpen: (generation, { autoplay }) => {
-    player.show(generation, { autoplay });
+    openGeneration(generation, { autoplay });
     history.markCurrent(generation.id);
   },
   onRestore: (generation) => {
@@ -71,7 +136,7 @@ async function generate() {
 
   try {
     const generation = await api.synthesize(composer.payload());
-    player.show(generation, { autoplay: true });
+    openGeneration(generation, { autoplay: true });
     history.prepend(generation);
     history.markCurrent(generation.id);
     renderQuota({ ...generation.quota, used_today: generation.quota.used_today });

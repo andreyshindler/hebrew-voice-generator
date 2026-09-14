@@ -44,8 +44,11 @@ location /voice-gen/ {
     # Audio is served with range support; don't buffer it whole.
     proxy_buffering off;
 
-    # The API is JSON-only and text is capped by HV_MAX_CHARS.
-    client_max_body_size 1m;
+    # Must be at least HV_MAX_UPLOAD_BYTES. Photos, clips and recordings are
+    # posted to /api/media, and nginx rejects an oversized body with a 413 the
+    # app never sees - so a cap below the app's own looks like a broken upload
+    # button with nothing in the logs.
+    client_max_body_size 64m;
 }
 
 # Static assets are served by the app (they live inside the container). If you

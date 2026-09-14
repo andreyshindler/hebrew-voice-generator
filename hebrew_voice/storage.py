@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import secrets
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable, Optional
 
 from .errors import NotFound
@@ -20,9 +21,17 @@ from .errors import NotFound
 __all__ = [
     "Artifacts",
     "new_generation_id",
+    "new_render_id",
+    "new_media_id",
     "GENERATION_ID_RE",
     "relative_paths",
+    "render_relative_path",
+    "media_relative_path",
     "write_artifacts",
+    "write_bytes",
+    "link_or_copy",
+    "remove_tree",
+    "render_workdir",
     "resolve_under",
     "delete_files",
     "ensure_data_dir",
@@ -33,6 +42,10 @@ __all__ = [
 #: before a handler ever runs.
 GENERATION_ID_RE = r"^[0-9a-f]{32}$"
 _ID_RE = re.compile(GENERATION_ID_RE)
+
+#: Extensions we will build a path for. Nothing from a request reaches the
+#: filesystem, but the format does reach a filename, so it is checked here too.
+_FORMAT_RE = re.compile(r"^[a-z0-9]{2,5}$")
 
 
 @dataclass(frozen=True)
@@ -61,21 +74,115 @@ def ensure_data_dir(data_dir: Path) -> None:
         pass
 
 
-def relative_paths(user_id: int, gen_id: str, *, when: Optional[float] = None) -> Artifacts:
+def relative_paths(
+    user_id: int, gen_id: str, *, when: Optional[float] = None, audio_ext: str = "mp3"
+) -> Artifacts:
     """Build the relative paths for a generation.
 
     Sharded by user and month so no single directory grows without bound.
+
+    ``audio_ext`` is "mp3" for everything the synthesiser makes. A transcribed
+    recording keeps whatever container it arrived in, because the app has no
+    way to convert it - so the extension has to be part of the path rather than
+    assumed by it.
     """
     if not _ID_RE.match(gen_id):
         raise ValueError("generation id must be 32 hex characters")
+    if not _FORMAT_RE.match(audio_ext):
+        raise ValueError("audio extension must be 2-5 lowercase alphanumerics")
     stamp = time.gmtime(when if when is not None else time.time())
     prefix = f"audio/{user_id}/{stamp.tm_year:04d}/{stamp.tm_mon:02d}"
     return Artifacts(
-        audio_rel=f"{prefix}/{gen_id}.mp3",
+        audio_rel=f"{prefix}/{gen_id}.{audio_ext}",
         srt_rel=f"{prefix}/{gen_id}.srt",
         vtt_rel=f"{prefix}/{gen_id}.vtt",
         cues_rel=f"{prefix}/{gen_id}.cues.json",
     )
+
+
+def new_render_id() -> str:
+    """A fresh opaque id for a render, same shape as a generation id."""
+    return secrets.token_hex(16)
+
+
+def render_relative_path(audio_rel: str, render_id: str, fmt: str) -> str:
+    """Where a rendered video for ``audio_rel``'s generation belongs.
+
+    Derived from the audio's own path rather than from today's date, so a
+    render of a months-old generation lands beside it instead of in the
+    current month's directory.
+    """
+    if not _ID_RE.match(render_id):
+        raise ValueError("render id must be 32 hex characters")
+    if not _FORMAT_RE.match(fmt):
+        raise ValueError(f"unsupported render format: {fmt!r}")
+    parent = PurePosixPath(audio_rel).parent
+    stem = PurePosixPath(audio_rel).stem
+    return str(parent / f"{stem}.{render_id}.{fmt}")
+
+
+def new_media_id() -> str:
+    """A fresh opaque id for an uploaded file."""
+    return secrets.token_hex(16)
+
+
+def media_relative_path(user_id: int, media_id: str, ext: str, *, when=None) -> str:
+    """Where an upload belongs, relative to the data dir.
+
+    Kept under its own top-level directory rather than beside generations:
+    uploads outlive any one recording and are deleted on their own schedule.
+    """
+    if not _ID_RE.match(media_id):
+        raise ValueError("media id must be 32 hex characters")
+    if not _FORMAT_RE.match(ext):
+        raise ValueError(f"unsupported media extension: {ext!r}")
+    stamp = time.gmtime(when if when is not None else time.time())
+    return f"media/{user_id}/{stamp.tm_year:04d}/{stamp.tm_mon:02d}/{media_id}.{ext}"
+
+
+def write_bytes(data_dir: Path, relative: str, data: bytes) -> None:
+    """Write one file atomically, creating its directory."""
+    _atomic_write(data_dir / relative, data)
+
+
+def render_workdir(render_id: str) -> str:
+    """Scratch directory for one render, relative to the data dir.
+
+    Everything the renderer needs is gathered here - the composition, the
+    audio, and a link per upload - so the project directory it is handed
+    contains exactly that render's inputs and nothing else. It is removed when
+    the render finishes, whichever way it finishes.
+    """
+    if not _ID_RE.match(render_id):
+        raise ValueError("render id must be 32 hex characters")
+    return f"work/{render_id}"
+
+
+def link_or_copy(source: Path, target: Path) -> None:
+    """Hard-link ``source`` to ``target``, copying only if that fails.
+
+    A render needs its audio and every uploaded clip inside one directory, and
+    copying a few hundred MB of video per render would be absurd when both
+    paths are on the same volume. A hard link is free and the original is never
+    touched.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    try:
+        os.link(source, target)
+    except OSError:
+        # Different filesystems, or a mount that forbids links.
+        shutil.copyfile(source, target)
+
+
+def remove_tree(data_dir: Path, relative: str) -> None:
+    """Delete a scratch directory, refusing anything outside the data dir."""
+    root = data_dir.resolve()
+    target = (root / relative).resolve()
+    if target == root or root not in target.parents:
+        raise ValueError("refusing to remove a directory outside the data directory")
+    shutil.rmtree(target, ignore_errors=True)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

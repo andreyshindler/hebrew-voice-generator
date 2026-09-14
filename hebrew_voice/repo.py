@@ -6,13 +6,14 @@ connection, so there is no shared state and no thread affinity to worry about.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
 from .db import connect, transaction
-from .models import Generation, Session, User
+from .models import Generation, Media, Render, Session, Transcription, User
 
 __all__ = [
     "create_user",
@@ -43,6 +44,25 @@ __all__ = [
     "refund_quota",
     "usage_today",
     "expired_generations",
+    "insert_render",
+    "get_render",
+    "renders_for_generation",
+    "render_video_paths",
+    "find_reusable_render",
+    "claim_next_render",
+    "finish_render",
+    "fail_render",
+    "requeue_or_fail_running",
+    "reserve_render_quota",
+    "refund_render_quota",
+    "renders_today",
+    "insert_media",
+    "get_media",
+    "get_media_many",
+    "list_media",
+    "delete_media",
+    "media_bytes_used",
+    "media_paths_for_user",
 ]
 
 
@@ -335,8 +355,8 @@ def insert_generation(db: Path, gen: Generation) -> None:
                 (id, user_id, created_at, title, text_raw, text_prepared, char_count,
                  voice, rate, pitch, volume, keep_niqqud, expand_symbols,
                  expand_abbreviations, expand_acronyms, audio_rel, srt_rel, vtt_rel,
-                 cues_rel, words_per_cue, audio_bytes, duration_ms, cue_count)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cues_rel, words_per_cue, audio_bytes, duration_ms, cue_count, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 gen.id, gen.user_id, gen.created_at, gen.title, gen.text_raw,
@@ -345,6 +365,7 @@ def insert_generation(db: Path, gen: Generation) -> None:
                 int(gen.expand_abbreviations), int(gen.expand_acronyms),
                 gen.audio_rel, gen.srt_rel, gen.vtt_rel, gen.cues_rel,
                 gen.words_per_cue, gen.audio_bytes, gen.duration_ms, gen.cue_count,
+                gen.source,
             ),
         )
 
@@ -399,6 +420,458 @@ def delete_generation(db: Path, gen_id: str, user_id: Optional[int] = None) -> b
     with connect(db) as conn:
         cur = conn.execute(sql, params)
         return bool(cur.rowcount)
+
+
+# --------------------------------------------------------------------------
+# Renders
+# --------------------------------------------------------------------------
+
+
+def insert_render(db: Path, render: Render) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO renders
+                (id, generation_id, user_id, created_at, started_at, finished_at,
+                 status, error, format, words_per_cue, width, height, fps,
+                 video_rel, video_bytes, media_ids, plan)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                render.id, render.generation_id, render.user_id, render.created_at,
+                render.started_at, render.finished_at, render.status, render.error,
+                render.format, render.words_per_cue, render.width, render.height,
+                render.fps, render.video_rel, render.video_bytes,
+                json.dumps(list(render.media_ids)),
+                json.dumps(render.plan, sort_keys=True, separators=(",", ":")),
+            ),
+        )
+
+
+def get_render(db: Path, render_id: str, user_id: Optional[int] = None) -> Optional[Render]:
+    """Fetch a render, scoped to its owner when ``user_id`` is given."""
+    sql = "SELECT * FROM renders WHERE id = ?"
+    params: List[object] = [render_id]
+    if user_id is not None:
+        sql += " AND user_id = ?"
+        params.append(user_id)
+    with connect(db) as conn:
+        row = conn.execute(sql, params).fetchone()
+    return Render.from_row(row) if row else None
+
+
+def renders_for_generation(db: Path, gen_id: str) -> List[Render]:
+    with connect(db) as conn:
+        rows = conn.execute(
+            "SELECT * FROM renders WHERE generation_id = ? ORDER BY created_at DESC", (gen_id,)
+        ).fetchall()
+    return [Render.from_row(row) for row in rows]
+
+
+def delete_renders_for_generation(db: Path, gen_id: str) -> None:
+    """Drop every render of a recording.
+
+    Used when the words change under them: a finished video has the old
+    transcript burned into its pictures, so it no longer shows what the
+    recording says. Leaving the rows would also let the dedupe hand that stale
+    video back as if it were current.
+    """
+    with connect(db) as conn:
+        conn.execute("DELETE FROM renders WHERE generation_id = ?", (gen_id,))
+
+
+def render_video_paths(db: Path, gen_ids: Sequence[str]) -> List[str]:
+    """Every stored video file for these generations.
+
+    Deleting a generation cascades its render *rows* away, but the files on
+    disk are ours to unlink - so callers collect the paths with this first and
+    delete them after.
+    """
+    if not gen_ids:
+        return []
+    placeholders = ",".join("?" for _ in gen_ids)
+    with connect(db) as conn:
+        rows = conn.execute(
+            f"SELECT video_rel FROM renders "
+            f"WHERE generation_id IN ({placeholders}) AND video_rel IS NOT NULL",
+            list(gen_ids),
+        ).fetchall()
+    return [row[0] for row in rows]
+
+
+def find_reusable_render(
+    db: Path,
+    gen_id: str,
+    *,
+    fmt: str,
+    words_per_cue: int,
+    width: int,
+    height: int,
+    fps: int,
+    media_ids: str = "[]",
+    plan: str = "{}",
+) -> Optional[Render]:
+    """A finished render with identical parameters, if one exists.
+
+    Re-rendering the same thing costs minutes of CPU for a byte-identical
+    file, so the request handler hands back the old one instead.
+    """
+    with connect(db) as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM renders
+             WHERE generation_id = ? AND status = 'done' AND video_rel IS NOT NULL
+               AND format = ? AND words_per_cue = ? AND width = ? AND height = ? AND fps = ?
+               AND media_ids = ? AND plan = ?
+             ORDER BY created_at DESC LIMIT 1
+            """,
+            (gen_id, fmt, words_per_cue, width, height, fps, media_ids, plan),
+        ).fetchone()
+    return Render.from_row(row) if row else None
+
+
+def claim_next_render(db: Path) -> Optional[Render]:
+    """Take the oldest queued render and mark it running, atomically.
+
+    The UPDATE ... WHERE status = 'queued' inside the transaction is what makes
+    this safe: if anything else claimed the row first the rowcount is zero and
+    we look again.
+    """
+    now = int(time.time())
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT * FROM renders WHERE status = 'queued' ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            cur = conn.execute(
+                "UPDATE renders SET status = 'running', started_at = ? "
+                " WHERE id = ? AND status = 'queued'",
+                (now, row["id"]),
+            )
+            if not cur.rowcount:
+                return None
+            claimed = conn.execute("SELECT * FROM renders WHERE id = ?", (row["id"],)).fetchone()
+    return Render.from_row(claimed) if claimed else None
+
+
+def finish_render(db: Path, render_id: str, *, video_rel: str, video_bytes: int) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            UPDATE renders
+               SET status = 'done', finished_at = ?, video_rel = ?, video_bytes = ?, error = NULL
+             WHERE id = ?
+            """,
+            (int(time.time()), video_rel, video_bytes, render_id),
+        )
+
+
+def fail_render(db: Path, render_id: str, error: str) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE renders SET status = 'failed', finished_at = ?, error = ? WHERE id = ?",
+            (int(time.time()), error[:500], render_id),
+        )
+
+
+def requeue_or_fail_running(db: Path, error: str) -> int:
+    """Clear out renders left running by a process that went away.
+
+    The container restarts on every deploy, and a row stuck in ``running`` has
+    no worker behind it - nothing would ever move it again. They are failed
+    rather than requeued on purpose: a job that killed the renderer would
+    otherwise come back and kill it again on every boot.
+    """
+    with connect(db) as conn:
+        cur = conn.execute(
+            "UPDATE renders SET status = 'failed', finished_at = ?, error = ? "
+            " WHERE status = 'running'",
+            (int(time.time()), error),
+        )
+        return cur.rowcount or 0
+
+
+# --------------------------------------------------------------------------
+# Transcriptions
+# --------------------------------------------------------------------------
+
+
+def insert_transcription(db: Path, job: Transcription) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO transcriptions
+                (id, user_id, media_id, generation_id, created_at, started_at,
+                 finished_at, status, error, seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job.id, job.user_id, job.media_id, job.generation_id, job.created_at,
+                job.started_at, job.finished_at, job.status, job.error, job.seconds,
+            ),
+        )
+
+
+def update_transcript(
+    db: Path, gen_id: str, user_id: int, *, text: str, cue_count: int
+) -> None:
+    """Record corrected words against a recording.
+
+    Only the text and the cue count move: the audio, its length and its
+    artifact paths are unchanged, because correcting a word does not change
+    what was said.
+    """
+    with connect(db) as conn:
+        conn.execute(
+            """
+            UPDATE generations
+               SET text_raw = ?, text_prepared = ?, char_count = ?, cue_count = ?
+             WHERE id = ? AND user_id = ?
+            """,
+            (text, text, len(text), cue_count, gen_id, user_id),
+        )
+
+
+def get_transcription(db: Path, job_id: str, user_id: int) -> Optional[Transcription]:
+    """Fetch a job, scoped to its owner - ownership is part of the query."""
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT * FROM transcriptions WHERE id = ? AND user_id = ?", (job_id, user_id)
+        ).fetchone()
+    return Transcription.from_row(row) if row else None
+
+
+def has_active_transcription(db: Path, user_id: int) -> bool:
+    """Whether this account already has one in flight.
+
+    One at a time per account: the queue is shared and a single user should not
+    be able to fill it.
+    """
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM transcriptions "
+            " WHERE user_id = ? AND status IN ('queued', 'running') LIMIT 1",
+            (user_id,),
+        ).fetchone()
+    return row is not None
+
+
+def claim_next_transcription(db: Path) -> Optional[Transcription]:
+    """Take the oldest queued job and mark it running, atomically.
+
+    Mirrors :func:`claim_next_render`, including why the conditional UPDATE is
+    what makes it safe.
+    """
+    now = int(time.time())
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT * FROM transcriptions WHERE status = 'queued' "
+                " ORDER BY created_at LIMIT 1"
+            ).fetchone()
+            if row is None:
+                return None
+            cur = conn.execute(
+                "UPDATE transcriptions SET status = 'running', started_at = ? "
+                " WHERE id = ? AND status = 'queued'",
+                (now, row["id"]),
+            )
+            if not cur.rowcount:
+                return None
+            claimed = conn.execute(
+                "SELECT * FROM transcriptions WHERE id = ?", (row["id"],)
+            ).fetchone()
+    return Transcription.from_row(claimed) if claimed else None
+
+
+def finish_transcription(db: Path, job_id: str, *, generation_id: str, seconds: float) -> None:
+    """Attach the recording the job produced, and record what it really cost."""
+    with connect(db) as conn:
+        conn.execute(
+            """
+            UPDATE transcriptions
+               SET status = 'done', finished_at = ?, generation_id = ?, seconds = ?,
+                   error = NULL
+             WHERE id = ?
+            """,
+            (int(time.time()), generation_id, seconds, job_id),
+        )
+
+
+def fail_transcription(db: Path, job_id: str, error: str) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE transcriptions SET status = 'failed', finished_at = ?, error = ? "
+            " WHERE id = ?",
+            (int(time.time()), error[:500], job_id),
+        )
+
+
+def fail_running_transcriptions(db: Path, error: str) -> int:
+    """Clear out jobs left running by a process that went away.
+
+    Failed rather than requeued, for the same reason as renders: a recording
+    that killed the worker would otherwise come back every boot.
+    """
+    with connect(db) as conn:
+        cur = conn.execute(
+            "UPDATE transcriptions SET status = 'failed', finished_at = ?, error = ? "
+            " WHERE status = 'running'",
+            (int(time.time()), error),
+        )
+        return cur.rowcount or 0
+
+
+def reserve_transcription_quota(
+    db: Path, user_id: int, day: str, seconds: int, limit: int
+) -> Tuple[bool, int]:
+    """Atomically claim seconds of today's transcription allowance.
+
+    The caller only knows what the browser measured, so this is a reservation
+    against an estimate. :func:`settle_transcription_quota` corrects it once
+    the provider says how long the recording really was.
+    """
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT transcribed_seconds FROM usage_daily WHERE user_id = ? AND day = ?",
+                (user_id, day),
+            ).fetchone()
+            used = row[0] if row else 0
+            if used + seconds > limit:
+                return False, used
+            conn.execute(
+                """
+                INSERT INTO usage_daily
+                    (user_id, day, chars, requests, renders, transcribed_seconds)
+                VALUES (?, ?, 0, 0, 0, ?)
+                ON CONFLICT(user_id, day) DO UPDATE
+                    SET transcribed_seconds = transcribed_seconds + ?
+                """,
+                (user_id, day, seconds, seconds),
+            )
+            return True, used + seconds
+
+
+def refund_transcription_quota(db: Path, user_id: int, day: str, seconds: int) -> None:
+    """Give the allowance back when the job produced no subtitles."""
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE usage_daily "
+            "   SET transcribed_seconds = MAX(0, transcribed_seconds - ?) "
+            " WHERE user_id = ? AND day = ?",
+            (seconds, user_id, day),
+        )
+
+
+def settle_transcription_quota(db: Path, user_id: int, day: str, delta: int) -> None:
+    """Correct the reservation once the real duration is known.
+
+    ``delta`` is signed: the browser's estimate is advice, and a recording that
+    turned out longer should still be charged for what it was.
+    """
+    if not delta:
+        return
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE usage_daily "
+            "   SET transcribed_seconds = MAX(0, transcribed_seconds + ?) "
+            " WHERE user_id = ? AND day = ?",
+            (delta, user_id, day),
+        )
+
+
+# --------------------------------------------------------------------------
+# Media
+# --------------------------------------------------------------------------
+
+
+def insert_media(db: Path, item: Media) -> None:
+    with connect(db) as conn:
+        conn.execute(
+            """
+            INSERT INTO media
+                (id, user_id, created_at, kind, mime, rel, bytes, duration_ms,
+                 original_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.id, item.user_id, item.created_at, item.kind, item.mime,
+                item.rel, item.bytes, item.duration_ms, item.original_name,
+            ),
+        )
+
+
+def get_media(db: Path, media_id: str, user_id: int) -> Optional[Media]:
+    """Fetch one upload, scoped to its owner."""
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT * FROM media WHERE id = ? AND user_id = ?", (media_id, user_id)
+        ).fetchone()
+    return Media.from_row(row) if row else None
+
+
+def get_media_many(db: Path, media_ids: Sequence[str], user_id: int) -> List[Media]:
+    """Fetch several uploads, **in the order asked for**.
+
+    Order is the whole point - it is the running order of the finished video -
+    and SQL will not preserve it, so the rows are reordered here. Ids that do
+    not exist or belong to someone else are simply absent, which the caller
+    checks by counting.
+    """
+    if not media_ids:
+        return []
+    placeholders = ",".join("?" for _ in media_ids)
+    with connect(db) as conn:
+        rows = conn.execute(
+            f"SELECT * FROM media WHERE user_id = ? AND id IN ({placeholders})",
+            [user_id, *media_ids],
+        ).fetchall()
+    by_id = {row["id"]: Media.from_row(row) for row in rows}
+    return [by_id[mid] for mid in media_ids if mid in by_id]
+
+
+def list_media(db: Path, user_id: int, limit: int = 100) -> List[Media]:
+    with connect(db) as conn:
+        rows = conn.execute(
+            "SELECT * FROM media WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return [Media.from_row(row) for row in rows]
+
+
+def delete_media(db: Path, media_id: str, user_id: int) -> Optional[str]:
+    """Delete one upload, returning its path so the file can go too."""
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT rel FROM media WHERE id = ? AND user_id = ?", (media_id, user_id)
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                "DELETE FROM media WHERE id = ? AND user_id = ?", (media_id, user_id)
+            )
+            return row[0]
+
+
+def media_bytes_used(db: Path, user_id: int) -> int:
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(bytes), 0) FROM media WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row[0] or 0
+
+
+def media_paths_for_user(db: Path, user_id: int) -> List[str]:
+    """Every stored upload path for a user, for wholesale cleanup."""
+    with connect(db) as conn:
+        rows = conn.execute(
+            "SELECT rel FROM media WHERE user_id = ?", (user_id,)
+        ).fetchall()
+    return [row[0] for row in rows]
 
 
 def expired_generations(
@@ -476,9 +949,58 @@ def refund_quota(db: Path, user_id: int, day: str, chars: int) -> None:
         )
 
 
+def reserve_render_quota(db: Path, user_id: int, day: str, limit: int) -> Tuple[bool, int]:
+    """Atomically claim one of today's renders. Mirrors :func:`reserve_quota`."""
+    with connect(db) as conn:
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT renders FROM usage_daily WHERE user_id = ? AND day = ?", (user_id, day)
+            ).fetchone()
+            used = row[0] if row else 0
+            if used + 1 > limit:
+                return False, used
+            conn.execute(
+                """
+                INSERT INTO usage_daily (user_id, day, chars, requests, renders)
+                VALUES (?, ?, 0, 0, 1)
+                ON CONFLICT(user_id, day) DO UPDATE
+                    SET renders = renders + 1
+                """,
+                (user_id, day),
+            )
+            return True, used + 1
+
+
+def refund_render_quota(db: Path, user_id: int, day: str) -> None:
+    """Give a render allowance back when the render never produced a file."""
+    with connect(db) as conn:
+        conn.execute(
+            "UPDATE usage_daily SET renders = MAX(0, renders - 1) WHERE user_id = ? AND day = ?",
+            (user_id, day),
+        )
+
+
+def renders_today(db: Path, user_id: int, day: str) -> int:
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT renders FROM usage_daily WHERE user_id = ? AND day = ?", (user_id, day)
+        ).fetchone()
+    return row[0] if row else 0
+
+
 def usage_today(db: Path, user_id: int, day: str) -> int:
     with connect(db) as conn:
         row = conn.execute(
             "SELECT chars FROM usage_daily WHERE user_id = ? AND day = ?", (user_id, day)
+        ).fetchone()
+    return row[0] if row else 0
+
+
+def transcribed_today(db: Path, user_id: int, day: str) -> int:
+    """Seconds of audio charged to this account today."""
+    with connect(db) as conn:
+        row = conn.execute(
+            "SELECT transcribed_seconds FROM usage_daily WHERE user_id = ? AND day = ?",
+            (user_id, day),
         ).fetchone()
     return row[0] if row else 0

@@ -1,8 +1,12 @@
 services:
   hebrew-voice:
     build: .
-    image: hebrew-voice:latest
-    container_name: hebrew-voice
+    # Both are overridable so a second stack - a branch running beside
+    # production on the same box - does not collide. Container names are
+    # global to the Docker daemon, not scoped to the compose project, and two
+    # stacks sharing an image tag would overwrite each other's build.
+    image: ${HV_IMAGE:-hebrew-voice}:latest
+    container_name: ${HV_CONTAINER_NAME:-hebrew-voice}
     restart: unless-stopped
 
     # Bound to localhost only - nginx on the host terminates TLS and proxies
@@ -21,6 +25,16 @@ services:
       HV_DATA_DIR: /data
       HV_HOST: 0.0.0.0
       HV_PORT: "8080"
+      # Turns video rendering on. Both containers mount the same volume at
+      # /data, so a path in a render request means the same thing to both.
+      #
+      # The single dash means .env can set this to empty to turn rendering off
+      # without editing this file - an `environment:` entry would otherwise
+      # win over env_file and there would be no way to disable it.
+      HV_RENDER_URL: ${HV_RENDER_URL-http://hyperframes:8080}
+
+    depends_on:
+      - hyperframes
 
     # The SQLite database and the generated audio live here; keep the volume
     # across image rebuilds or you lose every account and every recording.
@@ -34,6 +48,45 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # The HyperFrames renderer. Optional: without HV_RENDER_URL pointing at it
+  # the app hides everything about video, so this service can be removed and
+  # nothing else breaks.
+  hyperframes:
+    build: ./deploy/render
+    image: ${HV_RENDER_IMAGE:-hebrew-voice-renderer}:latest
+    container_name: ${HV_RENDER_CONTAINER_NAME:-hebrew-voice-renderer}
+    restart: unless-stopped
+
+    # Deliberately NOT published. It renders arbitrary HTML in a browser and
+    # must only ever be reachable from the app over the compose network.
+    expose:
+      - "8080"
+
+    # Chromium writes a lot through shared memory and crashes on the 64MB
+    # default, in ways that look like random render failures.
+    shm_size: "1gb"
+
+    # The same artifacts volume the app uses: the app writes the composition
+    # and the renderer writes the video back, so neither has to stream a large
+    # file over HTTP. Both see it at /data, which is what makes the paths in a
+    # render request mean the same thing on both sides.
+    volumes:
+      - hebrew-voice-data:/data
+
+    healthcheck:
+      test: ["CMD", "node", "-e",
+             "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
     logging:
       driver: json-file

@@ -22,9 +22,15 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${HV_APP_DIR:-$(dirname -- "$SCRIPT_DIR")}"
 BRANCH="${HV_DEPLOY_BRANCH:-main}"
 CONTAINER="${HV_CONTAINER:-hebrew-voice}"
+# The optional video renderer, by compose service name. Absent from
+# docker-compose.yml on installs that do not want video, which is fine.
+RENDER_SERVICE="${HV_RENDER_SERVICE:-hyperframes}"
 HEALTH_TIMEOUT="${HV_HEALTH_TIMEOUT:-90}"
 KEEP_BACKUPS="${HV_KEEP_BACKUPS:-5}"
-LOCK_FILE="${HV_LOCK_FILE:-/tmp/hebrew-voice-deploy.lock}"
+# Per-checkout, so deploying a branch stack cannot block a production deploy
+# (and vice versa). Two deploys of the *same* checkout still serialise, which
+# is the point - they would fight over the same container.
+LOCK_FILE="${HV_LOCK_FILE:-/tmp/hebrew-voice-deploy-$(printf '%s' "$APP_DIR" | cksum | cut -d' ' -f1).lock}"
 
 PULL=1
 for arg in "$@"; do
@@ -37,6 +43,7 @@ done
 
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 die() { printf '\n\033[31merror: %s\033[0m\n' "$*" >&2; exit 1; }
+warn() { printf '\n\033[33mwarning: %s\033[0m\n' "$*" >&2; }
 
 # The container name is fixed, so two overlapping deploys would fight over it.
 exec 9>"$LOCK_FILE"
@@ -59,6 +66,25 @@ $DOCKER info >/dev/null 2>&1 || die \
 # ---------------------------------------------------------------- fetch code
 
 if [ "$PULL" -eq 1 ]; then
+    # `git reset --hard origin/main` on a checkout that is deliberately on a
+    # branch silently drags it back to main, keeping the branch *name* - so
+    # everything afterwards builds and deploys main while looking like the
+    # branch. Refuse unless the caller said which branch they meant.
+    current_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '')"
+    if [ -z "${HV_DEPLOY_BRANCH+set}" ] \
+       && [ -n "$current_branch" ] && [ "$current_branch" != "HEAD" ] \
+       && [ "$current_branch" != "$BRANCH" ]; then
+        die "this checkout is on '$current_branch' but the deploy defaults to '$BRANCH'.
+
+       Resetting would move it to $BRANCH while leaving the branch name in
+       place, and every step after that would build $BRANCH.
+
+       Deploy the branch:   HV_DEPLOY_BRANCH=$current_branch $0
+       Deploy $BRANCH anyway:   HV_DEPLOY_BRANCH=$BRANCH $0
+       Build what is here:  $0 --no-pull
+
+       Nothing has been changed."
+    fi
     before="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     log "Fetching origin/$BRANCH"
     git fetch --prune origin "$BRANCH"
@@ -112,6 +138,42 @@ else
     log "Container not running - skipping the backup"
 fi
 
+# --------------------------------------------------- name collision preflight
+
+# Container names are global to the Docker daemon rather than scoped to the
+# compose project, so a second stack whose .env is missing the overrides
+# quietly claims production's name. Docker's own error names the conflict but
+# not the cause, and by then it has already rebuilt the image - over
+# production's tag, because that is missing too.
+PROJECT="$(compose config 2>/dev/null | sed -n 's/^name: *//p' | head -1)"
+while read -r claimed; do
+    [ -n "$claimed" ] || continue
+    owner="$($DOCKER inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' \
+             "$claimed" 2>/dev/null || true)"
+    if [ -n "$owner" ] && [ "$owner" != "$PROJECT" ]; then
+        die "container name '$claimed' is already owned by the '$owner' stack.
+
+       This checkout is the '$PROJECT' stack, so its .env is missing the
+       overrides that keep two instances apart. Add to $APP_DIR/.env:
+
+           COMPOSE_PROJECT_NAME=$PROJECT
+           HV_CONTAINER_NAME=$PROJECT
+           HV_RENDER_CONTAINER_NAME=$PROJECT-renderer
+           HV_IMAGE=$PROJECT
+           HV_RENDER_IMAGE=$PROJECT-renderer
+           HV_PUBLISH_PORT=<a free port, not production's>
+           HV_BASE_URL=<this instance's own public URL>
+
+       Then check it before starting anything:
+
+           docker compose config | grep -E 'container_name|image:'
+
+       See deploy/BRANCH.md. Nothing has been started or changed."
+    fi
+done <<COLLISION_CHECK
+$(compose config 2>/dev/null | sed -n 's/^ *container_name: *//p')
+COLLISION_CHECK
+
 # ----------------------------------------------------------------- rebuild
 
 log "Building and restarting"
@@ -122,6 +184,33 @@ log "Pruning dangling images"
 docker image prune -f >/dev/null || true
 
 # ------------------------------------------------------------ health check
+
+# The renderer is checked first and separately. `compose up` starts every
+# service, but only the app was ever polled here - so a deploy could report
+# success with the renderer dead and video failing for every user.
+if compose ps --services 2>/dev/null | grep -qx "$RENDER_SERVICE"; then
+    log "Waiting for the renderer (up to ${HEALTH_TIMEOUT}s)"
+    deadline=$((SECONDS + HEALTH_TIMEOUT))
+    render_ok=0
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if compose exec -T "$RENDER_SERVICE" node -e \
+            "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" \
+            2>/dev/null
+        then
+            render_ok=1
+            break
+        fi
+        sleep 2
+    done
+    if [ "$render_ok" -eq 1 ]; then
+        log "Renderer healthy"
+    else
+        # Not fatal: audio and subtitles are the product, video is an extra.
+        # Failing the deploy over it would block a fix for anything else.
+        warn "the renderer never became healthy - video rendering will fail"
+        compose logs --tail=30 "$RENDER_SERVICE" >&2 || true
+    fi
+fi
 
 # Inside the container the port is always 8080, whatever HV_PUBLISH_PORT maps
 # it to on the host - so this needs no knowledge of .env.

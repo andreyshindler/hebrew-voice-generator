@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
 
 __all__ = ["User", "Session", "Generation", "UsageDay"]
 
@@ -107,6 +108,11 @@ class Generation:
     cues_rel: Optional[str] = None
     #: Words per cue in the stored subtitle files.
     words_per_cue: int = 7
+    #: Where the audio and its timings came from: "tts" for synthesis, or
+    #: "transcription" for a recording the user uploaded. A transcription has
+    #: no voice and no synthesis settings, so the UI cannot offer to replay or
+    #: restore them.
+    source: str = "tts"
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "Generation":
@@ -134,11 +140,24 @@ class Generation:
             cue_count=row["cue_count"],
             cues_rel=row["cues_rel"],
             words_per_cue=row["words_per_cue"],
+            source=row["source"],
         )
 
     @property
     def duration(self) -> float:
         return self.duration_ms / 1000.0
+
+    @property
+    def audio_ext(self) -> str:
+        """The container the audio is actually in.
+
+        Synthesis always makes MP3. A transcribed recording keeps whatever was
+        uploaded, so the extension comes off the stored path rather than being
+        assumed - a WAV served as audio/mpeg does not play.
+        """
+        if not self.audio_rel or "." not in self.audio_rel.rsplit("/", 1)[-1]:
+            return "mp3"
+        return self.audio_rel.rsplit(".", 1)[-1].lower()
 
     def public(self, *, full: bool = False, base: str = "") -> Dict[str, Any]:
         """JSON shape for the API. ``full`` adds the text, for replay.
@@ -168,8 +187,9 @@ class Generation:
             # The density the stored files were rendered at, so the result
             # card opens showing what is actually on disk.
             "words_per_cue": self.words_per_cue,
+            "source": self.source,
             "urls": {
-                "audio": f"{base}/api/generations/{self.id}/audio.mp3",
+                "audio": f"{base}/api/generations/{self.id}/audio.{self.audio_ext}",
                 "srt": f"{base}/api/generations/{self.id}/subtitles.srt" if self.srt_rel else None,
                 "vtt": f"{base}/api/generations/{self.id}/subtitles.vtt" if self.vtt_rel else None,
             },
@@ -188,6 +208,217 @@ class Generation:
                 }
             )
         return data
+
+
+#: Output formats a render can be asked for. The value is both the container
+#: HyperFrames is told to produce and the file extension we store it under.
+#:
+#: mp4 burns the captions into a picture and carries the audio. webm is VP9
+#: with a real alpha channel and no audio - a caption overlay to lay over
+#: footage the user already has, which is the case the editors handle worst
+#: for Hebrew.
+RENDER_FORMATS = ("mp4", "webm")
+
+#: The states a render moves through. Only the worker writes the last three.
+RENDER_STATUSES = ("queued", "running", "done", "failed")
+
+#: Frame sizes a render can be asked for, as (width, height).
+#:
+#: An overlay has to match the footage it is laid over: a 16:9 caption layer on
+#: 9:16 video letterboxes, which defeats the point. Vertical is the default
+#: because that is what the captions are mostly for - short-form video - and it
+#: is the shape CapCut, Reels and TikTok all use.
+#:
+#: Both dimensions are even, which H.264 requires and which fails deep inside
+#: FFmpeg rather than anywhere useful.
+RENDER_SIZES = {
+    "vertical": (1080, 1920),
+    "landscape": (1280, 720),
+    "square": (1080, 1080),
+}
+
+
+@dataclass(frozen=True)
+class Media:
+    """One uploaded photo or clip, to composite behind the captions."""
+
+    id: str
+    user_id: int
+    created_at: int
+    kind: str
+    mime: str
+    rel: str
+    bytes: int = 0
+    #: What the browser measured before uploading. Advice for laying the
+    #: timeline out, never a security or correctness input.
+    duration_ms: int = 0
+    original_name: str = ""
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Media":
+        return cls(
+            id=row["id"],
+            user_id=row["user_id"],
+            created_at=row["created_at"],
+            kind=row["kind"],
+            mime=row["mime"],
+            rel=row["rel"],
+            bytes=row["bytes"],
+            duration_ms=row["duration_ms"],
+            original_name=row["original_name"],
+        )
+
+    def public(self, *, base: str = "") -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "created_at": self.created_at,
+            "kind": self.kind,
+            "mime": self.mime,
+            "bytes": self.bytes,
+            "duration": self.duration_ms / 1000.0,
+            "name": self.original_name,
+            "url": f"{base}/api/media/{self.id}/file",
+        }
+
+
+@dataclass(frozen=True)
+class Render:
+    """One rendered video of a generation, at one set of parameters."""
+
+    id: str
+    generation_id: str
+    user_id: int
+    created_at: int
+    started_at: int
+    finished_at: int
+    status: str
+    error: Optional[str]
+    format: str
+    words_per_cue: int
+    width: int
+    height: int
+    fps: int
+    video_rel: Optional[str] = None
+    video_bytes: int = 0
+    #: Ordered ids of the uploaded media composited behind the captions.
+    media_ids: Tuple[str, ...] = ()
+    #: How this render is cut - per-shot durations, caption styling, motion,
+    #: music. Presentation only; nothing queries inside it.
+    plan: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Render":
+        return cls(
+            id=row["id"],
+            generation_id=row["generation_id"],
+            user_id=row["user_id"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            status=row["status"],
+            error=row["error"],
+            format=row["format"],
+            words_per_cue=row["words_per_cue"],
+            width=row["width"],
+            height=row["height"],
+            fps=row["fps"],
+            video_rel=row["video_rel"],
+            video_bytes=row["video_bytes"],
+            media_ids=tuple(json.loads(row["media_ids"] or "[]")),
+            plan=json.loads(row["plan"] or "{}"),
+        )
+
+    @property
+    def is_finished(self) -> bool:
+        return self.status in ("done", "failed")
+
+    def public(self, *, base: str = "") -> Dict[str, Any]:
+        """JSON shape for the API.
+
+        The download URL only appears once the file exists, so the client can
+        treat its presence as "ready" without also checking the status.
+        """
+        ready = self.status == "done" and self.video_rel is not None
+        return {
+            "id": self.id,
+            "generation_id": self.generation_id,
+            "created_at": self.created_at,
+            "status": self.status,
+            "error": self.error,
+            "format": self.format,
+            "words_per_cue": self.words_per_cue,
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+            "video_bytes": self.video_bytes,
+            "media_ids": list(self.media_ids),
+            "plan": self.plan,
+            "url": f"{base}/api/renders/{self.id}/video.{self.format}" if ready else None,
+        }
+
+
+#: The states a transcription moves through. Same shape as a render, for the
+#: same reason: the database is the queue, so the row has to say where it is.
+TRANSCRIPTION_STATUSES = ("queued", "running", "done", "failed")
+
+
+@dataclass(frozen=True)
+class Transcription:
+    """One request to turn an uploaded recording into word timings.
+
+    Separate from the generation it produces because the job exists before the
+    recording does, and may never produce one at all. ``generation_id`` is
+    filled in only on success, which is also what the client polls for.
+    """
+
+    id: str
+    user_id: int
+    media_id: Optional[str]
+    generation_id: Optional[str]
+    created_at: int
+    started_at: Optional[int]
+    finished_at: Optional[int]
+    status: str
+    error: Optional[str]
+    #: Seconds of audio actually charged for. The browser's estimate at
+    #: reservation time, corrected to the provider's number once it answers.
+    seconds: float
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "Transcription":
+        return cls(
+            id=row["id"],
+            user_id=row["user_id"],
+            media_id=row["media_id"],
+            generation_id=row["generation_id"],
+            created_at=row["created_at"],
+            started_at=row["started_at"],
+            finished_at=row["finished_at"],
+            status=row["status"],
+            error=row["error"],
+            seconds=row["seconds"],
+        )
+
+    @property
+    def is_finished(self) -> bool:
+        return self.status in ("done", "failed")
+
+    def public(self) -> Dict[str, Any]:
+        """JSON shape for the API.
+
+        ``generation_id`` appears only once the recording exists, so the client
+        can treat its presence as "ready" without also checking the status -
+        the same contract as a render's download URL.
+        """
+        ready = self.status == "done"
+        return {
+            "id": self.id,
+            "created_at": self.created_at,
+            "status": self.status,
+            "error": self.error,
+            "seconds": self.seconds,
+            "generation_id": self.generation_id if ready else None,
+        }
 
 
 @dataclass(frozen=True)

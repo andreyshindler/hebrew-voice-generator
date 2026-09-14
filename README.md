@@ -33,6 +33,15 @@ it on a VPS and hand the URL to other people.
   in your history, without re-synthesising.
 - **Script upload** — drop a `.txt` file onto the text box; it's read in the browser and
   loaded into the editor, still editable before you generate.
+- **Subtitles from your own voice** — record straight from the microphone, or upload a
+  recording or a clip you filmed, and get the same word-timed SRT and VTT back without
+  synthesising anything. The recorder shows a live level meter, stops itself at the
+  configured limit, and lets you hear a take back before anything is uploaded — a false
+  start costs no storage and no transcription quota. It becomes an ordinary
+  recording in your history, so the density control and the video editor work on it
+  exactly as they do on a synthesised one. Off unless `HV_STT_URL` and `HV_STT_KEY` point
+  at an OpenAI-compatible transcription API; note that the recording is uploaded to
+  whichever provider you configure.
 - **History** — replay, re-download, or reload the settings of anything you made before.
 - **Accounts** — email and password in SQLite, signup gated behind an invite code
   *and* email confirmation: registering sends a Hebrew verification link, and the
@@ -41,9 +50,10 @@ it on a VPS and hand the URL to other people.
   server-wide concurrency cap, and automatic retention cleanup.
 - **A CLI** for scripting and for smoke-testing a fresh install.
 
-Four runtime dependencies: `edge-tts`, `fastapi`, `uvicorn`, `jinja2`. Passwords use
-stdlib `hashlib.scrypt` and storage uses stdlib `sqlite3`, so there's no ORM, no
-password library, and nothing that needs a compiler.
+Six runtime dependencies, all pure-Python wheels: `edge-tts`, `fastapi`, `uvicorn`,
+`jinja2`, `python-multipart` for uploads, and `aiohttp` for the renderer and transcription
+clients. Passwords use stdlib `hashlib.scrypt` and storage uses stdlib `sqlite3`, so
+there's no ORM, no password library, and nothing that needs a compiler.
 
 ---
 
@@ -172,6 +182,100 @@ can't import a subtitle file. On the CLI it's `--words-in-cue N`.
 > That flag is ours. `edge-tts` had a `--words-in-cue` of its own in 6.x, but it's gone in
 > the 7.x line this pins, and 7.x defaults to sentence boundaries — the app asks for
 > `WordBoundary` explicitly, which is what makes per-word timings available at all.
+
+---
+
+## Rendered video
+
+Importing an SRT is the reliable path, but it still asks the editor to lay Hebrew out. The
+result card can skip that and render the captions itself, using
+[HyperFrames](https://github.com/heygen-com/hyperframes) — HTML into MP4 through headless
+Chromium and FFmpeg. Because a browser does the layout, right-to-left ordering, niqqud and
+shaping are correct by construction, which is the whole thing the editors get wrong.
+
+Two outputs, chosen in the card:
+
+| | What you get |
+| --- | --- |
+| **סרטון עם כתוביות** | An MP4: the audio, with the captions burned into the picture. |
+| **שכבת כתוביות שקופה** | A VP9 WebM with a real alpha channel — captions only, no background. Drop it over your own footage as a layer. |
+
+Both use the density currently selected, so the karaoke setting gives word-by-word captions.
+
+**This needs a second container.** HyperFrames wants Node, Chromium and FFmpeg, none of which
+belong in an image that is otherwise pure Python with no compiler — and a render must not
+compete with the web worker for CPU. So it runs as a sidecar,
+[`deploy/render/`](deploy/render/), sharing the artifacts volume: the app writes a composition,
+the renderer writes the video back, and no large file crosses a socket. HeyGen publishes no
+image, so this one is ours to build and to keep patched — it carries a Chromium.
+
+`docker compose up` starts it and sets `HV_RENDER_URL`. **Leave that variable empty and the
+whole feature disappears** — no button, no endpoints, no worker — so an install that doesn't
+want a browser on the box simply drops the service.
+
+A render takes tens of seconds at best and minutes for anything long, so it is queued rather
+than done in the request: the card polls until the file is ready. Two consequences worth
+knowing:
+
+- **Renders are metered separately** (`HV_DAILY_RENDER_QUOTA`, 10/day) because one costs
+  minutes of CPU where a synthesis costs a second. Asking twice for the identical thing hands
+  back the first file instead of encoding it again, and never spends the allowance twice.
+- **The frame shape is chosen per render** — vertical 9:16, square, or landscape 16:9 — and
+  defaults to vertical. That is not cosmetic: a 16:9 caption overlay laid over 9:16 footage
+  letterboxes, which defeats the point of the overlay. Captions scale to the *short* edge, so
+  vertical gets larger text rather than smaller, and sit higher in portrait to clear the
+  controls apps draw over the bottom of the screen.
+- **Vertical is the expensive one**: 2.07M pixels against landscape's 0.92M, so roughly twice
+  the work. The transparent format is slower still, since alpha on Linux forces screenshot
+  capture instead of the faster frame path. Measure on your own box before trusting
+  `HV_RENDER_TIMEOUT`.
+
+Recordings made before per-word timings existed can't be rendered, the same limit the density
+control has.
+
+### Your own photos and clips
+
+Upload images and video and they play behind the captions, in the order shown under the
+button. The voiceover's length is split evenly between them: three photos over a nine-second
+recording get three seconds each. Everything is scaled to `cover`, so a landscape photo fills
+a 9:16 frame by cropping rather than letterboxing.
+
+Uploaded video is **muted** — its own audio would fight the narration, and mixing two tracks
+is a decision the app doesn't make for you.
+
+Two things worth knowing:
+
+- **The type comes from the file's first bytes**, never its name or the browser's
+  `Content-Type`. A `.jpg` full of MP4 is stored and served as an MP4; anything that isn't a
+  JPEG, PNG, GIF, WebP, MP4, WebM or MOV is refused outright rather than stored and hoped
+  about.
+- **Clip lengths are measured in the browser**, because this image has no media tools. That
+  number only ever influences layout — a clip shorter than its slot leaves its last frame up
+  rather than cutting to black — and is never trusted for anything that matters.
+
+### Editing
+
+Under **עריכה** in the result card:
+
+| | |
+| --- | --- |
+| **Order** | `‹` and `›` on each tile. The number under it is its place in the running order. |
+| **Length** | The slider under each tile. These are *proportions*, not seconds — a shot set to 3 against one at 1 holds three times as long, and the whole thing is scaled to fit the voiceover exactly. |
+| **Captions** | Size, position (bottom/middle/top), colour, an optional backing box, and karaoke highlighting of the word being spoken. |
+| **Motion** | A slow zoom on photos and a soft fade between shots. Both on by default. |
+| **Music** | Upload an audio file and it appears in the picker, playing under the narration at a level you set. |
+
+Karaoke works by emitting each caption once per word with a different one lit, because the
+renderer shows and hides whole elements rather than restyling one mid-shot. A five-word cue
+becomes five elements, which is nothing next to the frames being encoded.
+
+Uploaded audio never appears as a shot — it is only offered as music — and the transparent
+overlay format carries no audio at all, music included.
+
+Storage is capped per account (`HV_MEDIA_QUOTA_BYTES`, 512 MB) because the renderer reads
+these files off the same disk everything else lives on. Each render stages its inputs into a
+scratch directory using hard links, so a 200 MB clip costs nothing to prepare and the
+directory is removed however the render ends.
 
 ---
 

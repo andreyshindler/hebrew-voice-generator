@@ -124,6 +124,62 @@ class Settings:
     thread_pool_size: int = 16
     hash_concurrency: int = 4
 
+    # Video rendering. Off unless a renderer URL is configured, so an install
+    # without the sidecar behaves exactly as it did before.
+    render_url: str = ""
+    #: Where the *renderer* sees the data directory. Both containers mount the
+    #: same volume, so this is normally identical to data_dir - it only differs
+    #: when the app runs outside Docker against a containerised renderer.
+    render_data_dir: Optional[Path] = None
+    #: One at a time by default: a render is Chromium plus FFmpeg, and the box
+    #: this runs on is small.
+    max_concurrent_renders: int = 1
+    render_timeout: float = 900.0
+    daily_render_quota: int = 10
+    #: Refuse to render audio longer than this. Render cost is linear in
+    #: duration and a long clip can tie the queue up for a very long time.
+    max_render_seconds: float = 300.0
+    #: Default frame shape, by name - see models.RENDER_SIZES. The request can
+    #: pick another; this is what it gets when it does not.
+    render_size: str = "vertical"
+    #: HyperFrames accepts 24, 30 or 60 only.
+    render_fps: int = 30
+    #: "draft" | "standard" | "high" - the encoder preset.
+    render_quality: str = "standard"
+    #: How often the worker looks for queued jobs.
+    render_poll_seconds: float = 2.0
+
+    # Transcription. Off unless a provider is configured, so an install
+    # without one behaves exactly as it did before.
+    #: Base URL of an OpenAI-compatible speech-to-text API, without the
+    #: trailing path - Groq and OpenAI both expose /audio/transcriptions under
+    #: one of these, which is why the provider is a setting and not code.
+    stt_url: str = ""
+    stt_key: str = ""
+    stt_model: str = "whisper-large-v3"
+    #: Told to the provider rather than detected. The app is Hebrew-only, and
+    #: letting Whisper guess is how a Hebrew recording comes back as Arabic.
+    stt_language: str = "he"
+    stt_timeout: float = 300.0
+    #: Seconds of audio per account per day. Transcription is billed by the
+    #: hour upstream, so this is the only thing standing between a shared
+    #: install and a surprising invoice.
+    daily_transcribe_seconds: int = 1800
+    #: Refuse a single recording longer than this.
+    max_transcribe_seconds: float = 600.0
+    max_concurrent_transcriptions: int = 1
+    #: How often the worker looks for queued jobs.
+    transcribe_poll_seconds: float = 2.0
+
+    # Uploaded photos and clips, composited behind the captions.
+    #: Largest single upload. Video reaches this far faster than photos do.
+    max_upload_bytes: int = 64 * 1024 * 1024
+    #: Total an account may keep. The renderer needs the files on disk, so
+    #: this is the real limit on what video costs the box.
+    media_quota_bytes: int = 512 * 1024 * 1024
+    #: Most clips in one video, to bound the composition and the render.
+    max_media_per_render: int = 20
+
     # Retention
     history_keep: int = 50
     history_max_age_days: int = 30
@@ -175,6 +231,32 @@ class Settings:
     def email_enabled(self) -> bool:
         """True when a real SMTP relay is configured."""
         return bool(self.smtp_host and self.smtp_from)
+
+    @property
+    def renderer_data_dir(self) -> Path:
+        """The data directory as the renderer container addresses it."""
+        return self.render_data_dir or self.data_dir
+
+    @property
+    def rendering_enabled(self) -> bool:
+        """True when a renderer sidecar is configured.
+
+        Everything about video is gated on this, so an install without the
+        sidecar keeps working exactly as before rather than offering a button
+        that can only fail.
+        """
+        return bool(self.render_url)
+
+    @property
+    def transcription_enabled(self) -> bool:
+        """True when a speech-to-text provider is configured.
+
+        Both halves are required: a URL without a key cannot authenticate, and
+        a key without a URL has nowhere to go. Gating on the pair means a
+        half-filled .env leaves the feature off rather than offering a button
+        that fails on the first click.
+        """
+        return bool(self.stt_url and self.stt_key)
 
     def verification_link(self, token: str) -> str:
         """The absolute URL that goes in the email.
@@ -246,6 +328,32 @@ class Settings:
             synth_timeout=_float(env, "HV_SYNTH_TIMEOUT", 180.0),
             thread_pool_size=_int(env, "HV_THREAD_POOL_SIZE", 16),
             hash_concurrency=_int(env, "HV_HASH_CONCURRENCY", 4),
+            render_url=(env.get("HV_RENDER_URL") or "").rstrip("/"),
+            render_data_dir=(
+                Path(env["HV_RENDER_DATA_DIR"]).expanduser()
+                if env.get("HV_RENDER_DATA_DIR")
+                else None
+            ),
+            max_concurrent_renders=_int(env, "HV_MAX_CONCURRENT_RENDERS", 1),
+            render_timeout=_float(env, "HV_RENDER_TIMEOUT", 900.0),
+            daily_render_quota=_int(env, "HV_DAILY_RENDER_QUOTA", 10),
+            max_render_seconds=_float(env, "HV_MAX_RENDER_SECONDS", 300.0),
+            render_size=(env.get("HV_RENDER_SIZE") or "vertical").lower(),
+            render_fps=_int(env, "HV_RENDER_FPS", 30),
+            render_quality=(env.get("HV_RENDER_QUALITY") or "standard").lower(),
+            render_poll_seconds=_float(env, "HV_RENDER_POLL_SECONDS", 2.0),
+            stt_url=(env.get("HV_STT_URL") or "").rstrip("/"),
+            stt_key=env.get("HV_STT_KEY") or "",
+            stt_model=env.get("HV_STT_MODEL") or "whisper-large-v3",
+            stt_language=env.get("HV_STT_LANGUAGE") or "he",
+            stt_timeout=_float(env, "HV_STT_TIMEOUT", 300.0),
+            daily_transcribe_seconds=_int(env, "HV_DAILY_TRANSCRIBE_SECONDS", 1800),
+            max_transcribe_seconds=_float(env, "HV_MAX_TRANSCRIBE_SECONDS", 600.0),
+            max_concurrent_transcriptions=_int(env, "HV_MAX_CONCURRENT_TRANSCRIPTIONS", 1),
+            transcribe_poll_seconds=_float(env, "HV_TRANSCRIBE_POLL_SECONDS", 2.0),
+            max_upload_bytes=_int(env, "HV_MAX_UPLOAD_BYTES", 64 * 1024 * 1024),
+            media_quota_bytes=_int(env, "HV_MEDIA_QUOTA_BYTES", 512 * 1024 * 1024),
+            max_media_per_render=_int(env, "HV_MAX_MEDIA_PER_RENDER", 20),
             history_keep=_int(env, "HV_HISTORY_KEEP", 50),
             history_max_age_days=_int(env, "HV_HISTORY_MAX_AGE_DAYS", 30),
             cleanup_interval_min=_int(env, "HV_CLEANUP_INTERVAL_MIN", 60),
@@ -318,6 +426,34 @@ class Settings:
             problems.append("HV_MAX_CHARS must be positive")
         if self.max_concurrent_synth < 1:
             problems.append("HV_MAX_CONCURRENT_SYNTH must be at least 1")
+        if self.rendering_enabled:
+            if self.max_concurrent_renders < 1:
+                problems.append("HV_MAX_CONCURRENT_RENDERS must be at least 1")
+            if self.render_fps not in (24, 30, 60):
+                problems.append(f"HV_RENDER_FPS must be 24, 30 or 60, got {self.render_fps}")
+            if self.render_quality not in ("draft", "standard", "high"):
+                problems.append(
+                    "HV_RENDER_QUALITY must be draft, standard or high, "
+                    f"got {self.render_quality!r}"
+                )
+            from .models import RENDER_SIZES  # local: models imports nothing here
+
+            if self.render_size not in RENDER_SIZES:
+                problems.append(
+                    f"HV_RENDER_SIZE must be one of {', '.join(sorted(RENDER_SIZES))}, "
+                    f"got {self.render_size!r}"
+                )
+        if self.stt_url and not self.stt_key:
+            problems.append("HV_STT_URL is set but HV_STT_KEY is empty")
+        if self.transcription_enabled:
+            if self.max_concurrent_transcriptions < 1:
+                problems.append("HV_MAX_CONCURRENT_TRANSCRIPTIONS must be at least 1")
+            if self.daily_transcribe_seconds < 1:
+                problems.append("HV_DAILY_TRANSCRIBE_SECONDS must be at least 1")
+            if self.max_transcribe_seconds <= 0:
+                problems.append("HV_MAX_TRANSCRIBE_SECONDS must be positive")
+            if not self.stt_model:
+                problems.append("HV_STT_MODEL must not be empty")
         if problems:
             raise ValueError("invalid configuration: " + "; ".join(problems))
 

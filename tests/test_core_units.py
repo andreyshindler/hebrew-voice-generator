@@ -188,3 +188,48 @@ def os_environ_keys():
     import os
 
     return [key for key in os.environ if key.startswith("HV_")]
+
+
+class TestErrorMessagesAreTranslated:
+    """Every error code the server can emit needs a Hebrew string.
+
+    The UI is Hebrew-only and RTL. ``messageFor(code, fallback)`` falls back to
+    the server's own message, which is English, so a code missing from the map
+    does not fail - it just surfaces an English sentence in the middle of a
+    Hebrew page. That is exactly the kind of thing nobody notices until a user
+    hits the error.
+    """
+
+    def _codes(self):
+        import re
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent / "hebrew_voice"
+        codes = set()
+        for path in root.rglob("*.py"):
+            codes |= set(re.findall(r'code="([a-z_]+)"', path.read_text(encoding="utf-8")))
+        return codes
+
+    def _mapped(self):
+        import re
+        from pathlib import Path
+
+        api = (
+            Path(__file__).resolve().parent.parent
+            / "hebrew_voice/web/static/js/api.js"
+        ).read_text(encoding="utf-8")
+        # The MESSAGES object literal: two-space indented `key:` entries.
+        block = api.split("const MESSAGES", 1)[1].split("\n};", 1)[0]
+        return set(re.findall(r"^\s{2}([a-z_]+):", block, re.M))
+
+    def test_every_code_has_a_hebrew_message(self):
+        missing = sorted(self._codes() - self._mapped())
+        assert not missing, (
+            "these error codes would show the server's English text to a "
+            f"Hebrew-speaking user: {', '.join(missing)}"
+        )
+
+    def test_the_map_was_actually_found(self):
+        """Guard the guard: a renamed MESSAGES would make the test vacuous."""
+        assert len(self._mapped()) > 20
+        assert len(self._codes()) > 20
