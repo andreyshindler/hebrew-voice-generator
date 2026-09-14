@@ -59,7 +59,13 @@ async def upload_media(
     settings: Settings = Depends(get_settings),
     user: User = Depends(require_user),
 ):
-    """Store one photo or clip for this account."""
+    """Store one photo, clip or recording for this account.
+
+    The same endpoint backs three things: the shots behind the captions, the
+    background music, and the recordings sent for transcription. What a file is
+    for is decided later, by whoever asks for it - here it is only sniffed,
+    measured and stored.
+    """
     data = await _read_capped(file, settings.max_upload_bytes)
     if not data:
         raise UnprocessableEntity("The file is empty", code="empty_upload")
@@ -69,7 +75,8 @@ async def upload_media(
     kind = media_types.sniff(data[: media_types.HEADER_BYTES])
     if kind is None:
         raise UnprocessableEntity(
-            "Only JPEG, PNG, GIF, WebP images and MP4, WebM or MOV video can be used",
+            "Only JPEG, PNG, GIF or WebP images, MP4, WebM or MOV video, "
+            "and MP3, M4A, WAV or OGG audio can be used",
             code="unsupported_media",
         )
 
